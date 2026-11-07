@@ -131,4 +131,5 @@ def price_hint(key: str) -> str:
     if not info or not info.cents_per_unit:
         return ""
     cents = info.cents_per_unit * (info.default_qty if info.unit in ("g", "ml") else 1)
-    return f" (about R{round(cents / 100):d})"
+    rands = round(cents / 100)
+    return f" (about R{rands:d})" if rands >= 1 else ""

@@ -74,7 +74,10 @@ def _tick_user(s, user: User, now: datetime, stats: dict) -> None:
             stats["checkins"] += 1
 
     # --- tonight's dinner ---
-    if now >= _dinner_dt(user, now) and now.hour < 21 and not flows.today_suggestions(s, user):
+    today = now.date().isoformat()
+    if (now >= _dinner_dt(user, now) and now.hour < 21 and not flows.today_suggestions(s, user)
+            and ((user.pending or {}).get("dinner_day") != today or (user.pending or {}).get("dinner_after_checkin"))):
+        flows._set_pending(user, dinner_day=today)   # once a day, whatever was sent (idea, tip or check-in)
         if (user.pending or {}).get("dinner_after_checkin"):
             # we asked about last night first; if no answer within 45 min, send dinner anyway
             asked = s.scalar(select(Suggestion.checkin_sent_at).where(Suggestion.user_id == user.id)

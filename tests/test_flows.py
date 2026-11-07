@@ -269,3 +269,19 @@ def test_checkin_only_when_they_engaged():
     scheduler.tick()
     out = wa.sim_outbox.take(PHONE)
     assert any("Cooked it" in [t for _, t in buttons_of([m])] for m in out)
+
+
+def test_low_kitchen_tip_is_sent_only_once_a_day():
+    at(10)
+    send_text("Hi Dinner 101")
+    send_text("2 onions and some rice")
+    for b, _ in buttons_of(wa.sim_outbox.take(PHONE)):
+        tap(b)
+    wa.sim_outbox.take(PHONE)
+    sent = []
+    for minute in range(31, 40):
+        at(16, minute)
+        scheduler.tick()
+        sent += wa.sim_outbox.take(PHONE)
+    assert len(sent) == 1, [m.get("body") for m in sent]
+    assert "R0" not in sent[0]["body"]
