@@ -449,6 +449,8 @@ actually means and act on it like a sensible person would:
 - Use known catalogue keys for new items when they match: {catalogue}
 - Corrections ("no, there's still half the cheese") -> set.
 - If they want a dinner idea for tonight -> intent "dinner" (the app sends its own idea with buttons; don't write one).
+- If they tell you how many people eat ("we're only 2", "ons is 5") -> intent "set_people" with people n. This is NOT a
+  request for a different dish: keep tonight's dish, the app rescales it. Leave reply empty.
 - If they want the daily message at another time -> intent "set_time" with time HH:MM (evening by default).
 - If they're planning a meal/occasion and ask what they need -> intent "plan".
 - If they ask what's in the kitchen/fridge/freezer -> intent "list" (with place if named).
@@ -463,7 +465,7 @@ ASSISTANT_SCHEMA = ('{"reply":"text for the user, or empty if an intent handles 
                     '{"op":"set","key":"existing key","qty":n},'
                     '{"op":"clear","place":"fridge|freezer|cupboard|counter|all","reason":"finished|binned"},'
                     '{"op":"move","key":"existing key","storage":"fridge|freezer|cupboard|counter"}],'
-                    '"intent":"dinner|set_time|plan|list|null","time":"HH:MM|null","place":"fridge|freezer|cupboard|counter|null"}')
+                    '"intent":"dinner|set_time|set_people|plan|list|null","time":"HH:MM|null","people":n|null,"place":"fridge|freezer|cupboard|counter|null"}')
 
 
 def ai_assistant(text: str, kitchen_lines: list[str], history: list, today: str) -> dict:

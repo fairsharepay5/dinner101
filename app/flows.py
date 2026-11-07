@@ -235,7 +235,7 @@ def assistant_turn(s: Session, user: User, text: str, source: str) -> bool:
     _remember_chat(user, "u", text)
     reply = (data.get("reply") or "").strip()
     actions = parsing.assistant_actions(data)
-    intent = data.get("intent") if data.get("intent") in ("dinner", "set_time", "plan", "list") else None
+    intent = data.get("intent") if data.get("intent") in ("dinner", "set_time", "plan", "list", "set_people") else None
     if actions:
         apply_actions(s, user, actions, source="setup" if user.stage == "setup" else source, note=reply)
         if reply:
@@ -245,6 +245,22 @@ def assistant_turn(s: Session, user: User, text: str, source: str) -> bool:
     elif reply:
         say(s, user, reply)
         _remember_chat(user, "b", reply)
+    if intent == "set_people":
+        try:
+            people = int(data.get("people") or 0)
+        except (TypeError, ValueError):
+            people = 0
+        if 1 <= people <= 20:
+            _set_pending(user, people=people)
+            latest = [sg for sg in today_suggestions(s, user) if sg.status in ("sent", "accepted")]
+            if latest:
+                sg = latest[-1]
+                send(s, user, wa.buttons(f"👍 Got it, {people} people from now on. Here's tonight's dish for {people}:\n\n"
+                                         + recipe_text(s, user, sg),
+                                         [(f"cook:{sg.id}", "Let's cook it"), (f"other:{sg.id}", "Something else")]))
+            elif not reply:
+                say(s, user, f"👍 Got it, I'll plan dinners for {people} from now on.")
+        return True
     if intent == "dinner":
         send_dinner(s, user, force=True)
     elif intent == "set_time":
@@ -659,7 +675,8 @@ def send_dinner(s: Session, user: User, force: bool = False, exclude: set | None
         uses = f"Uses up your {_names(best.use_soon)} before they go off. Everything's at home."
     else:
         uses = "Everything's at home."
-    body = f"*Tonight: {r['name']}*\n{r['minutes']} min · serves {r['serves']}\n\n{uses}"
+    serves = (user.pending or {}).get("people") or r["serves"]
+    body = f"*Tonight: {r['name']}*\n{r['minutes']} min · serves {serves}\n\n{uses}"
     if near:
         body += f"\n\n💡 One item short of *{near.recipe['name']}*: {_names(near.missing)}{recipes.price_hint(near.missing[0])}."
     btns = [(f"cook:{sg.id}", "Let's cook it"), (f"other:{sg.id}", "Something else"), (f"recipe:{sg.id}", "Show recipe")]
@@ -678,7 +695,8 @@ def recipe_text(s: Session, user: User, sg: Suggestion) -> str:
         pantry.amount_phrase(catalogue.get(k).name if catalogue.get(k) else k, q, catalogue.get(k).unit if catalogue.get(k) else "count")
         for k, q in ev.used)
     steps = "\n".join(f"{i}. {st}" for i, st in enumerate(r["steps"], 1))
-    return f"*{r['name']}* ({r['minutes']} min)\n\nFrom your kitchen: {uses}\n\n{steps}"
+    serves = (user.pending or {}).get("people") or r["serves"]
+    return f"*{r['name']}* ({r['minutes']} min · for {serves})\n\nFrom your kitchen: {uses}\n\n{steps}"
 
 
 def accept(s: Session, user: User, sg: Suggestion) -> None:

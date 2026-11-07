@@ -37,10 +37,21 @@ class Eval:
         return not self.missing
 
 
-def evaluate(recipe: dict, stock: dict) -> Eval:
+def people_factor(user: User | None, recipe: dict) -> float:
+    """Scale a recipe to the household size ('we are only 2')."""
+    people = (user.pending or {}).get("people") if user is not None else None
+    if not people or not recipe.get("serves"):
+        return 1.0
+    return max(0.25, float(people) / float(recipe["serves"]))
+
+
+def evaluate(recipe: dict, stock: dict, factor: float = 1.0) -> Eval:
     ev = Eval(recipe=recipe)
     for ing in recipe["ingredients"]:
-        key, qty, optional = ing["key"], ing["qty"], ing.get("optional", False)
+        key, qty, optional = ing["key"], ing["qty"] * factor, ing.get("optional", False)
+        info = catalogue.get(key)
+        if info and info.unit == "count" and qty >= 1:
+            qty = round(qty)
         info = catalogue.get(key)
         if info and info.category == "staple":
             continue
@@ -104,7 +115,7 @@ def pick(s: Session, user: User, exclude: set[str] | None = None) -> tuple[Eval 
     for r in RECIPES.values():
         if r["id"] in exclude or likes.get(r["id"], 0) <= -3:
             continue
-        ev = evaluate(r, stock)
+        ev = evaluate(r, stock, people_factor(user, r))
         ev.score = score(ev, stock, recent, likes)
         if ev.can_make:
             if best is None or ev.score > best.score:
@@ -123,7 +134,8 @@ def needs(ev: Eval) -> list[tuple[str, float]]:
 
 
 def eval_for(s: Session, user: User, recipe_id: str) -> Eval:
-    return evaluate(RECIPES[recipe_id], pantry.stock(s, user))
+    r = RECIPES[recipe_id]
+    return evaluate(r, pantry.stock(s, user), people_factor(user, r))
 
 
 def price_hint(key: str) -> str:

@@ -359,3 +359,25 @@ def test_places_from_context_and_repeats_add_up(monkeypatch):
         steaks = [it for it in pantry.active_items(s, user) if it.key == "beef_steak"]
         assert len(steaks) == 1 and pantry.item_line(steaks[0]).endswith("×9")
         assert steaks[0].storage == "freezer"
+
+
+def test_we_are_only_two_rescales_same_dish(monkeypatch):
+    from app import parsing
+    from app.config import settings
+    out = onboard()
+    for _ in range(3):
+        b = buttons_of(out)
+        if not b:
+            break
+        out = tap(b[0][0])
+    out = send_text("dinner")
+    first = next(m for m in out if (m.get("body") or "").startswith("*Tonight:"))
+    dish = first["body"].split("\n")[0]
+    monkeypatch.setattr(type(settings), "ai_enabled", property(lambda self: True))
+    monkeypatch.setattr(parsing, "ai_assistant", lambda *a: {"reply": "", "actions": [], "intent": "set_people", "people": 2})
+    out = send_text("we are only 2 people")
+    body = out[0]["body"]
+    assert "2 people" in body and dish.replace("*Tonight: ", "").strip("*") in body and "for 2" in body
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        assert user.pending.get("people") == 2
