@@ -339,3 +339,23 @@ def test_assistant_removes_items_and_answers_cooking_questions(monkeypatch):
     assert "Halve it" in out[0]["body"]
     out = send_text("How do I change my car's oil?")
     assert "only help with food" in out[0]["body"]
+
+
+def test_places_from_context_and_repeats_add_up(monkeypatch):
+    from app import parsing
+    from app.config import settings
+    at(10)
+    send_text("Hi Dinner 101")
+    monkeypatch.setattr(type(settings), "ai_enabled", property(lambda self: True))
+    monkeypatch.setattr(parsing, "ai_assistant", lambda *a: {"reply": "", "actions": [
+        {"op": "add", "name": "steak", "key": "steak", "qty": 8, "unit": "count", "storage": "freezer"},
+        {"op": "add", "name": "mince", "key": "mince", "storage": "freezer"},
+        {"op": "add", "name": "steak", "key": "steak", "qty": 1, "unit": "count", "storage": "freezer"},
+        {"op": "add", "name": "milk", "key": "milk", "storage": "fridge"}]})
+    out = send_text("In the freezer I have 8 pieces of steak, mince and another steak. In the fridge milk.")
+    assert not buttons_of(out) or all(t not in ("Fridge", "Frozen") for _, t in buttons_of(out))
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        steaks = [it for it in pantry.active_items(s, user) if it.key == "beef_steak"]
+        assert len(steaks) == 1 and pantry.item_line(steaks[0]).endswith("×9")
+        assert steaks[0].storage == "freezer"

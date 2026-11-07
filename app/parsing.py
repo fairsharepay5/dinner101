@@ -440,6 +440,11 @@ actually means and act on it like a sensible person would:
   matching item from the kitchen list (use its key exactly as listed). "Threw out everything in the fridge" ->
   clear fridge. "Moved the mince to the freezer" -> move.
 - Only real food/drink is an item. Never add filler words, names or greetings.
+- Where things are: if they say "in the fridge I have...", "in the freezer...", "in the cupboard/pantry..." then EVERY
+  item after that (until they name another place) gets that storage. Always fill storage when you can tell it
+  from context, so the app doesn't have to ask.
+- Add up repeats: "8 pieces of steak ... and another steak" = ONE add of 9 steaks. Never return the same item twice
+  in one message; combine the amounts (only if both amounts were said; if one wasn't, keep the one that was).
 - Only record amounts they actually said; never invent quantities. Counted pieces stay counts (unit "count").
 - Use known catalogue keys for new items when they match: {catalogue}
 - Corrections ("no, there's still half the cheese") -> set.

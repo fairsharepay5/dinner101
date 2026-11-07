@@ -36,7 +36,7 @@ def I(key, name, cat, store, shelf, unit="count", qty=1, cents=0, aliases=(), as
 # ("4 chicken fillets", "6 chops", "2 blocks of cheese").
 PIECE_G = {
     "chicken_fillet": 150, "chicken_pieces": 200, "chicken_thighs": 120, "chicken_drumsticks": 110,
-    "pork_chops": 150, "lamb_chops": 100, "steak": 250, "fish_fillets": 150, "hake": 150,
+    "pork_chops": 150, "lamb_chops": 100, "steak": 250, "beef_steak": 250, "fish_fillets": 150, "hake": 150,
     "boerewors": 500, "sausages": 60, "burger_patties": 100, "patties": 100, "mince": 500,
     "cheese": 400, "mushrooms": 250, "pasta": 500, "rice": 1000,
 }

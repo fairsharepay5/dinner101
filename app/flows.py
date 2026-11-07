@@ -262,11 +262,34 @@ def assistant_turn(s: Session, user: User, text: str, source: str) -> bool:
     return True
 
 
+def _merge_same_items(items: list) -> list:
+    """'8 steaks ... another steak' in one message -> one line of 9 (same item, same place)."""
+    merged: dict = {}
+    out = []
+    for it in items:
+        key = it.key or catalogue.match(it.name) or (it.name or "").strip().lower()
+        where = it.storage
+        prev = merged.get((key, where)) or (merged.get((key, None)) if where else None)
+        if prev is None and where is None:
+            prev = next((p for (k, _w), p in merged.items() if k == key), None)
+        if prev is None:
+            merged[(key, where)] = it
+            out.append(it)
+            continue
+        if prev.qty is not None and it.qty is not None and (prev.unit or None) == (it.unit or None):
+            prev.qty = prev.qty + it.qty
+        elif prev.qty is None:
+            prev.qty, prev.unit = it.qty, it.unit
+        prev.storage = prev.storage or it.storage
+    return out
+
+
 def apply_actions(s: Session, user: User, actions: list, source: str, note: str = "") -> None:
     to_add = [a.item for a in actions if a.op == "add" and a.item]
     removed, changed = [], []
     cleared = []
     to_add = [it for it in to_add if not (not it.key and (it.name or "").strip().lower() in parsing.FILLER_ITEMS)]
+    to_add = _merge_same_items(to_add)
     for a in actions:
         if a.op == "move" and a.key and a.place:
             for it in pantry.active_items(s, user):
