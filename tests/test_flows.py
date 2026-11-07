@@ -1,0 +1,189 @@
+"""End-to-end conversation tests using the in-memory WhatsApp outbox."""
+from datetime import datetime, timedelta
+
+from sqlalchemy import select
+
+from app import clock, pantry, scheduler
+from app import whatsapp as wa
+from app.db import session_scope
+from app.flows import handle, on_slip_items
+from app.models import PantryItem, Suggestion, User
+from app.parsing import parse_slip_text
+from app.whatsapp import Inbound
+
+PHONE = "sim-27820000001"
+
+
+def send_text(t):
+    with session_scope() as s:
+        handle(s, Inbound(phone=PHONE, kind="text", text=t))
+    return wa.sim_outbox.take(PHONE)
+
+
+def tap(bid):
+    with session_scope() as s:
+        handle(s, Inbound(phone=PHONE, kind="button", button_id=bid))
+    return wa.sim_outbox.take(PHONE)
+
+
+def slip(text):
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        user.last_inbound_at = clock.now()
+        on_slip_items(s, user, parse_slip_text(text))
+    return wa.sim_outbox.take(PHONE)
+
+
+def buttons_of(msgs):
+    return [b for m in msgs if m["type"] == "buttons" for b in m["buttons"]]
+
+
+def at(h, m=0, days=0):
+    base = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0) + timedelta(days=days)
+    clock.set_to(base)
+
+
+def onboard():
+    at(10)
+    out = send_text("Hi Dinner 101")
+    assert "Welcome to Dinner 101" in out[0]["body"]
+    out = send_text("Six eggs, half a block of cheddar, milk, some tomatoes, a cucumber, mayo, 500g mince, "
+                    "a bag of pasta, two tins of tomatoes, chicken fillets, onions, rice, a pocket of potatoes")
+    return out
+
+
+def test_onboarding_asks_only_meat_storage_then_finishes():
+    out = onboard()
+    assert "Got" in out[0]["body"]
+    btns = buttons_of(out)
+    # first storage question is about a meat with Fridge/Frozen buttons
+    assert [t for _, t in btns] == ["Fridge", "Frozen"]
+    out = tap(btns[1][0])          # mince -> frozen
+    btns = buttons_of(out)
+    assert [t for _, t in btns] == ["Fridge", "Frozen"]
+    out = tap(btns[0][0])          # chicken -> fridge
+    assert "All set" in out[0]["body"]
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        assert user.stage == "active"
+        mince = s.scalar(select(PantryItem).where(PantryItem.key == "mince"))
+        assert mince.storage == "freezer" and mince.expires_at - mince.added_at > timedelta(days=30)
+        keys = {it.key for it in pantry.active_items(s, user)}
+        assert {"eggs", "cheese", "tomato", "canned_tomatoes", "pasta", "potato", "chicken_fillet"} <= keys
+
+
+def test_full_day_dinner_cook_checkin_and_deduction():
+    out = onboard()
+    for _ in range(3):
+        btns = buttons_of(out)
+        if not btns or btns[0][1] != "Fridge":
+            break
+        out = tap(btns[0][0])
+    at(16, 31)
+    stats = scheduler.tick()
+    assert stats["dinners"] == 1
+    out = wa.sim_outbox.take(PHONE)
+    dinner = out[-1]
+    assert dinner["body"].startswith("*Tonight:")
+    assert [t for _, t in dinner["buttons"]] == ["Let's cook it", "Something else", "Show recipe"]
+
+    # Something else -> a different meal
+    first_name = dinner["body"].split("\n")[0]
+    out = tap(dinner["buttons"][1][0])
+    second = out[-1]
+    assert second["body"].split("\n")[0] != first_name
+
+    out = tap(second["buttons"][0][0])
+    if out and out[-1]["type"] == "buttons" and out[-1]["buttons"][0][1] == "Yes":
+        out = tap(out[-1]["buttons"][0][0])
+    assert "Enjoy" in out[-1]["body"]
+
+    with session_scope() as s:
+        before = {it.key: it.qty for it in pantry.active_items(s, s.scalar(select(User)))}
+
+    at(19, 30)
+    stats = scheduler.tick()
+    assert stats["checkins"] == 1
+    out = wa.sim_outbox.take(PHONE)
+    assert [t for _, t in out[-1]["buttons"]] == ["Cooked it", "Didn't cook"]
+    out = tap(out[-1]["buttons"][0][0])
+    assert "updated your kitchen" in out[-1]["body"]
+    with session_scope() as s:
+        user = s.scalar(select(User))
+        after = {it.key: it.qty for it in pantry.active_items(s, user)}
+        sg = s.scalar(select(Suggestion).where(Suggestion.status == "cooked"))
+        assert sg is not None
+    assert after != before  # something was deducted
+
+    # no second dinner the same evening
+    assert scheduler.tick()["dinners"] == 0
+
+
+def test_unanswered_checkin_is_asked_before_next_dinner():
+    out = onboard()
+    while buttons_of(out) and buttons_of(out)[0][1] == "Fridge":
+        out = tap(buttons_of(out)[0][0])
+    at(16, 31)
+    scheduler.tick()
+    dinner = wa.sim_outbox.take(PHONE)[-1]
+    out = tap(dinner["buttons"][0][0])
+    if out[-1]["type"] == "buttons" and out[-1]["buttons"][0][1] == "Yes":
+        tap(out[-1]["buttons"][0][0])
+    # user ignores check-in; next day at dinner time we ask about last night first
+    at(16, 31, days=1)
+    scheduler.tick()
+    out = wa.sim_outbox.take(PHONE)
+    assert "did you cook" in out[-1]["body"].lower()
+    out = tap(out[-1]["buttons"][1][0])        # Didn't cook
+    out = tap(out[-1]["buttons"][1][0])        # Ate out / skipped -> dinner follows
+    assert any(m["body"].startswith("*Tonight:") for m in out)
+
+
+def test_slip_adds_items_and_buy_again_lowers_old_confidence():
+    out = onboard()
+    while buttons_of(out) and buttons_of(out)[0][1] == "Fridge":
+        out = tap(buttons_of(out)[0][0])
+    at(12, days=1)
+    out = slip("PNP TOM LOOSE 1.2KG 24.99\nPNP CHKN FLLT 1KG 89.99\nCLOVER FRSH MLK 2L 36.99\nCOLGATE 29.99\nTOTAL 151.97")
+    assert "Added 3 items" in out[0]["body"], out
+    assert "×10" in out[0]["body"]
+    with session_scope() as s:
+        toms = list(s.scalars(select(PantryItem).where(PantryItem.key == "tomato", PantryItem.active.is_(True))))
+        assert len(toms) == 2
+        assert min(t.confidence for t in toms) <= 0.5
+
+
+def test_voice_corrections():
+    onboard()
+    out = send_text("we finished the milk")
+    assert "Took off" in out[0]["body"]
+    out = send_text("threw out the cucumber")
+    assert "Took off" in out[0]["body"]
+    out = send_text("only 2 eggs left")
+    assert "Updated" in out[0]["body"]
+    with session_scope() as s:
+        eggs = s.scalar(select(PantryItem).where(PantryItem.key == "eggs", PantryItem.active.is_(True)))
+        assert eggs.qty == 2
+
+
+def test_trial_expiry_pauses_and_prompts_payment():
+    out = onboard()
+    while buttons_of(out) and buttons_of(out)[0][1] == "Fridge":
+        out = tap(buttons_of(out)[0][0])
+    at(10, days=12)
+    send_text("list")  # keeps window open
+    stats = scheduler.tick()
+    assert stats["reminders"] == 1
+    at(10, days=15)
+    scheduler.tick()
+    out = send_text("dinner")
+    assert "trial has ended" in out[-1]["body"]
+
+
+def test_delete_my_data():
+    onboard()
+    out = send_text("delete my data")
+    assert "deleted" in out[-1]["body"]
+    with session_scope() as s:
+        assert s.scalar(select(User).where(User.phone == PHONE)) is None
+        assert s.scalar(select(PantryItem)) is None
