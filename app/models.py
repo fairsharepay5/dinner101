@@ -40,6 +40,8 @@ class PantryItem(Base):
     name: Mapped[str] = mapped_column(String(120))                   # what we show, e.g. "Tomatoes"
     qty: Mapped[float] = mapped_column(Float, default=1)
     unit: Mapped[str] = mapped_column(String(12), default="count")   # count|g|ml|pack|portion
+    qty_known: Mapped[bool] = mapped_column(Boolean, default=True)   # False = user gave no amount; we only estimate in the background
+    piece_g: Mapped[Optional[float]] = mapped_column(Float)          # set when user counted pieces of a weighed item ("4 chicken fillets")
     category: Mapped[str] = mapped_column(String(12))                # staple|long_life|perishable
     storage: Mapped[str] = mapped_column(String(12))                 # fridge|freezer|cupboard|counter
     added_at: Mapped[datetime] = mapped_column(DateTime, default=clock.now)

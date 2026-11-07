@@ -141,8 +141,14 @@ def add_items(s: Session, user: User, parsed: list[ParsedItem], source: str) -> 
         ing = catalogue.get(key)
         category = ing.category if ing else (p.category or "long_life")
         unit = ing.unit if ing else (p.unit or "count")
+        qty_known = bool(p.qty)
         qty = p.qty if p.qty else (ing.default_qty if ing else 1)
-        if ing and p.unit and p.unit != ing.unit:
+        piece_g = None
+        if ing and unit in ("g", "ml") and p.qty and p.unit in (None, "count", "pack"):
+            # "4 chicken fillets" = 4 pieces, not 4 grams
+            piece_g = catalogue.piece_weight(key, ing)
+            qty = p.qty * piece_g
+        elif ing and p.unit and p.unit != ing.unit:
             qty = _convert(qty, p.unit, ing.unit, ing)
         if unit == "count" and qty >= 1:
             qty = round(qty)
@@ -172,6 +178,7 @@ def add_items(s: Session, user: User, parsed: list[ParsedItem], source: str) -> 
             user_id=user.id, key=key, name=name, qty=float(qty), unit=unit, category=category,
             storage=storage, added_at=added_at, confidence=1.0 if source != "setup" else 0.85,
             source=source, unit_cents=unit_cents, active=True,
+            qty_known=qty_known, piece_g=piece_g,
         )
         item.expires_at = _expiry(s, user, key, storage, added_at, p.shelf_days)
         s.add(item)
@@ -345,8 +352,23 @@ def amount_phrase(name: str, qty: float, unit: str) -> str:
     return f"{q} {name}"
 
 
+def shown_qty(items: list, qty: float, unit: str) -> str:
+    """What the user sees next to an item: only amounts they actually told us.
+    Counted pieces show as ×N; no amount given -> nothing."""
+    if not items or not all(getattr(i, "qty_known", True) is not False for i in items):
+        return ""
+    pg = [i.piece_g for i in items if getattr(i, "piece_g", None)]
+    if pg:
+        if len(pg) != len(items):
+            return ""
+        n = max(1, round(qty / (sum(pg) / len(pg)))) if qty > 0 else 0
+        return f"×{n}"
+    return fmt_qty(qty, unit)
+
+
 def item_line(it: PantryItem) -> str:
-    return f"{it.name} {fmt_qty(it.qty, it.unit)}"
+    q = shown_qty([it], it.qty, it.unit)
+    return f"{it.name} {q}".strip()
 
 
 def list_text(s: Session, user: User) -> str:
@@ -356,7 +378,7 @@ def list_text(s: Session, user: User) -> str:
         if d["category"] == "staple":
             continue
         name = d["items"][0].name if d["items"] else key
-        line = f"{name} {fmt_qty(d['qty'], d['unit'])}"
+        line = f"{name} {shown_qty(d['items'], d['qty'], d['unit'])}".strip()
         (soon if d["status"] == "use_soon" else rest).append(line)
     if not soon and not rest:
         return "Your kitchen list is empty. Send a voice note or a slip photo to add items."

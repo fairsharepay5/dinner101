@@ -122,3 +122,23 @@ def test_payfast_signature_stable(monkeypatch):
     params = [("merchant_id", "10000100"), ("amount", "39.00"), ("item_name", "Dinner 101 monthly")]
     sig = billing._signature(params)
     assert len(sig) == 32 and sig == billing._signature(params)
+
+
+def test_only_amounts_the_user_said_are_shown():
+    with session_scope() as s:
+        u = _user(s)
+        items = [a.item for a in parsing.understand(
+            "4 chicken fillets, cheddar cheese, onions, tomatoes, mushrooms, 500g pasta").actions if a.item]
+        res = pantry.add_items(s, u, items, "setup")
+        lines = {it.key: pantry.item_line(it) for it in res.added}
+        assert lines["chicken_fillet"] == "Chicken fillets ×4"
+        assert lines["cheese"] == "Cheddar cheese"
+        assert lines["onion"] == "Onions"
+        assert lines["tomato"] == "Tomatoes"
+        assert lines["mushrooms"] == "Mushrooms"
+        assert lines["pasta"] == "Pasta 500 g"
+        # behind the scenes we still track an estimate (4 fillets ~ 600 g) for recipes
+        chicken = next(it for it in res.added if it.key == "chicken_fillet")
+        assert chicken.qty == 600
+        text = pantry.list_text(s, u)
+        assert "Chicken fillets ×4" in text and "400 g" not in text and "250 g" not in text
