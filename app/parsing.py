@@ -232,9 +232,12 @@ SYSTEM = """You turn South African grocery slips and kitchen voice notes into st
 People mix English and Afrikaans. Slips use abbreviations (PNP, CHK, WW = store names; TOM = tomatoes; etc.).
 Known ingredient keys with their counting unit (key:unit): {catalogue}
 Rules:
-- Use a known key whenever the item matches one; convert qty into that key's unit (e.g. 1.2 kg tomatoes -> about 10 count; 2 L milk -> 2000 ml; 1 dozen eggs -> 12).
+- Use a known key whenever the item matches one.
+- Only give a qty the person actually said or the slip shows. Never invent or assume an amount: no amount mentioned -> qty null, unit null.
+- If they counted pieces ("4 chicken fillets", "6 chops", "2 blocks of cheese", "half a block"), return that count with unit "count" - do not convert pieces to grams.
+- If they gave a weight or volume, convert it into the key's unit (1.2 kg tomatoes -> about 10 count; 2 L milk -> 2000 ml; 1 kg chicken -> 1000 g; 1 dozen eggs -> 12).
 - If an item has no key, set key to null, give a short plain English name, and guess category (staple|long_life|perishable) and shelf_days.
-- Vague amounts ("some", "a bit") -> qty null.
+- Vague amounts ("some", "a bit", "a few") -> qty null.
 - storage only if the person said it (fridge|freezer|cupboard|counter), else null.
 - Ignore non-food (toiletries, cleaning, plastic bags, airtime) and slip totals.
 - price_cents = line total in cents if visible, else null.
