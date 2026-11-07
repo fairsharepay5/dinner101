@@ -285,3 +285,21 @@ def test_low_kitchen_tip_is_sent_only_once_a_day():
         sent += wa.sim_outbox.take(PHONE)
     assert len(sent) == 1, [m.get("body") for m in sent]
     assert "R0" not in sent[0]["body"]
+
+
+def test_threw_out_everything_in_fridge_and_cupboard():
+    out = onboard()
+    for _ in range(3):
+        b = buttons_of(out)
+        if not b:
+            break
+        out = tap(b[0][0])
+    out = send_text("I threw everything in the fridge and in the cupboard away")
+    body = out[0]["body"]
+    assert "Cleared your fridge" in body and "Cleared your cupboard" in body
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        left = {it.storage for it in pantry.active_items(s, user) if it.category != "staple"}
+        assert "fridge" not in left and "cupboard" not in left
+    out = send_text("okay, 2 onions")
+    assert "Okay" not in out[0]["body"]

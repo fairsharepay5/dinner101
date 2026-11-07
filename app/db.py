@@ -28,6 +28,9 @@ def _add_missing_columns() -> None:
         return
     have = {c["name"] for c in insp.get_columns("pantry_items")}
     with engine.begin() as conn:
+        # clean up filler words that were saved as food ("Okay ×1")
+        conn.execute(text("UPDATE pantry_items SET active = 0, removed_reason = 'replaced' "
+                          "WHERE active = 1 AND lower(name) IN ('okay','ok','oky','um','uh','yes','no','ja','nee','hi','hello','thanks','so','and','please')"))
         if "piece_g" not in have:
             conn.execute(text("ALTER TABLE pantry_items ADD COLUMN piece_g FLOAT"))
         if "qty_known" not in have:

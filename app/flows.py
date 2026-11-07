@@ -218,8 +218,13 @@ def on_text(s: Session, user: User, text: str, source: str = "voice") -> None:
 def apply_actions(s: Session, user: User, actions: list, source: str) -> None:
     to_add = [a.item for a in actions if a.op == "add" and a.item]
     removed, changed = [], []
+    cleared = []
+    to_add = [it for it in to_add if not (not it.key and (it.name or "").strip().lower() in parsing.FILLER_ITEMS)]
     for a in actions:
-        if a.op == "remove" and a.key:
+        if a.op == "clear" and a.place:
+            n = pantry.clear_place(s, user, a.place, a.reason or "binned")
+            cleared.append((a.place, n))
+        elif a.op == "remove" and a.key:
             if pantry.remove_key(s, user, a.key, a.reason or "finished", a.qty):
                 removed.append(a.key)
         elif a.op == "set" and a.key and a.qty is not None:
@@ -233,6 +238,9 @@ def apply_actions(s: Session, user: User, actions: list, source: str) -> None:
     if res.added:
         verb = "Got" if source == "setup" else "Added"
         parts.append(f"✅ {verb} {len(res.added)} item{'s' if len(res.added) != 1 else ''}: {_summary(res.added)}")
+    for place, n in cleared:
+        label = "everything" if place == "all" else f"your {place}"
+        parts.append(f"🗑️ Cleared {label}: took off {n} item{'s' if n != 1 else ''}." if n else f"👍 Nothing was listed in {label}.")
     if removed:
         parts.append(f"🗑️ Took off: {_names(removed)}")
     if changed:

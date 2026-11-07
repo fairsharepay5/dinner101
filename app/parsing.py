@@ -18,7 +18,8 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Action:
-    op: str                     # add | remove | set
+    op: str                     # add | remove | set | clear
+    place: str | None = None    # for clear: fridge | freezer | cupboard | counter | all
     item: ParsedItem | None = None
     key: str | None = None
     reason: str | None = None   # finished | binned
@@ -139,10 +140,21 @@ def parse_item_phrase(phrase: str) -> ParsedItem | None:
     return ParsedItem(name=name, key=key, qty=qty, unit=unit, storage=storage, raw=raw)
 
 
+CLEAR_RE = re.compile(r"\b(threw|throw|thrown|tossed|binned|chucked|gooi|weggegooi|cleared|emptied|cleaned out)\b.*\b(everything|all|alles)\b|\b(nothing left|is empty|are empty|leeg)\b")
+PLACE_RE = [("fridge", r"fridge|yskas"), ("freezer", r"freezer|vrieskas"), ("cupboard", r"cupboard|pantry|kas|spens"), ("counter", r"counter|toonbank")]
+FILLER_ITEMS = {"okay", "ok", "oky", "um", "uh", "yes", "no", "ja", "nee", "hi", "hello", "thanks", "so", "and", "dinner", "please", "right", "well"}
+
+
 def understand_offline(text: str) -> Understood:
     t = text.strip()
     low = t.lower()
     u = Understood()
+    if CLEAR_RE.search(low):
+        places = [p for p, pat in PLACE_RE if re.search(rf"\b({pat})\b", low)]
+        reason = "finished" if re.search(r"\b(empty|nothing left|leeg|used)\b", low) else "binned"
+        for p in places or ["all"]:
+            u.actions.append(Action(op="clear", place=p, reason=reason))
+        return u
     if not t:
         return u
     # "only 3 eggs left"
@@ -244,6 +256,8 @@ Rules:
 - storage only if the person said it (fridge|freezer|cupboard|counter), else null.
 - Ignore non-food (toiletries, cleaning, plastic bags, airtime) and slip totals.
 - price_cents = line total in cents if visible, else null.
+- Only real food or drink is an item. Never add filler words, greetings or names ("okay", "um", "yes", "hi", "Dinner 101").
+- "clear" = they emptied a whole place: "I threw out everything in the fridge" -> clear fridge (binned); "the cupboard is empty" -> clear cupboard; "we have nothing left" -> clear all. Use one clear action per place. A clear is NOT a "list" question.
 - intent: what the person wants besides changing their kitchen list, in any wording or language:
   "dinner" = they want a meal idea now (what can I make/cook/eat tonight, what's for supper, wat kan ek vanaand maak, I'm hungry, give me an idea);
   "set_time" = they want the daily dinner message at another time (send it at six, change dinner time to half past five, stuur dit om sesuur) -> also fill time as 24h HH:MM; evening hours given without am/pm are pm (six -> 18:00, half five -> 17:30);
@@ -255,7 +269,8 @@ Reply with JSON only."""
 
 SLIP_SCHEMA = '{"items":[{"raw":"slip line","name":"..","key":"..|null","qty":n|null,"unit":"..|null","price_cents":n|null,"category":"..|null","shelf_days":n|null}]}'
 MSG_SCHEMA = ('{"actions":[{"op":"add","name":"..","key":"..|null","qty":n|null,"unit":"..|null","storage":"..|null","category":"..|null","shelf_days":n|null},'
-              '{"op":"remove","key":"..","reason":"finished|binned","qty":n|null},{"op":"set","key":"..","qty":n}],'
+              '{"op":"remove","key":"..","reason":"finished|binned","qty":n|null},{"op":"set","key":"..","qty":n},'
+              '{"op":"clear","place":"fridge|freezer|cupboard|counter|all","reason":"finished|binned"}],'
               '"intent":"dinner|set_time|list|plan|help|null","time":"HH:MM|null","place":"fridge|freezer|cupboard|counter|null",'
               '"other":"the message text if it is NOT about adding/removing kitchen items, else null"}')
 
@@ -307,6 +322,8 @@ def ai_understand(text: str) -> Understood:
         u.intent = data["intent"]
     if data.get("place") in ("fridge", "freezer", "cupboard", "counter"):
         u.place = data["place"]
+    if any(a.op == "clear" for a in u.actions) and u.intent == "list":
+        u.intent = None
     if u.intent == "plan":
         u.actions = []          # planned food is not in the kitchen yet
     if isinstance(data.get("time"), str) and re.fullmatch(r"\d{1,2}:\d{2}", data["time"]):
@@ -316,6 +333,8 @@ def ai_understand(text: str) -> Understood:
         op = a.get("op")
         if op == "add":
             u.actions.append(Action(op="add", item=_item_from(a)))
+        elif op == "clear" and a.get("place") in ("fridge", "freezer", "cupboard", "counter", "all"):
+            u.actions.append(Action(op="clear", place=a["place"], reason=a.get("reason") or "binned"))
         elif op in ("remove", "set") and a.get("key"):
             key = a["key"] if a["key"] in catalogue.CATALOGUE else catalogue.match(a["key"]) or a["key"]
             u.actions.append(Action(op=op, key=key, reason=a.get("reason") or "finished", qty=a.get("qty")))

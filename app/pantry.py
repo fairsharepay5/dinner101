@@ -315,6 +315,20 @@ def confirm_present(s: Session, user: User, key: str, present: bool) -> None:
                 _remove(it, "finished", clock.now())
 
 
+def clear_place(s: Session, user: User, place: str, reason: str) -> int:
+    """'Threw out everything in the fridge' -> remove every item stored there (staples stay assumed)."""
+    now = clock.now()
+    n = 0
+    for it in active_items(s, user):
+        if it.category == "staple":
+            continue
+        where = it.storage if it.storage in ("fridge", "freezer", "cupboard", "counter") else "cupboard"
+        if place == "all" or where == place:
+            _remove(it, reason, now)
+            n += 1
+    return n
+
+
 def _remove(it: PantryItem, reason: str, now: datetime) -> None:
     it.active = False
     it.removed_reason = reason
