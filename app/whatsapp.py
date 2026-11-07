@@ -48,6 +48,13 @@ def buttons(body: str, btns: list[tuple[str, str]], image: str | None = None, fo
     return {"type": "buttons", "body": body, "buttons": [(i, t[:20]) for i, t in btns], "image": image, "footer": footer}
 
 
+def clean_param(text: str) -> str:
+    """Template values may not contain new lines, tabs or 4+ spaces in a row."""
+    import re as _re
+    t = _re.sub(r"\s*\n\s*", " ", str(text)).replace("\t", " ")
+    return _re.sub(r" {4,}", "   ", t).strip()[:1000]
+
+
 def template(name: str, params: list[str], fallback: dict, image: str | None = None, button_ids: list[str] | None = None) -> dict:
     return {"type": "template", "name": name, "params": params, "image": image, "buttons": button_ids or [], "fallback": fallback}
 
@@ -107,7 +114,7 @@ class CloudOutbox:
             if msg.get("image"):
                 comps.append({"type": "header", "parameters": [{"type": "image", "image": {"link": msg["image"]}}]})
             if msg.get("params"):
-                comps.append({"type": "body", "parameters": [{"type": "text", "text": p} for p in msg["params"]]})
+                comps.append({"type": "body", "parameters": [{"type": "text", "text": clean_param(p)} for p in msg["params"]]})
             for idx, bid in enumerate(msg.get("buttons", [])):
                 comps.append({"type": "button", "sub_type": "quick_reply", "index": str(idx), "parameters": [{"type": "payload", "payload": bid}]})
             self._post({"to": phone, "type": "template", "template": {"name": msg["name"], "language": {"code": "en"}, "components": comps}})

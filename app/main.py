@@ -257,18 +257,7 @@ async def whatsapp_profile(request: Request, key: str = ""):
     base = f"https://graph.facebook.com/{settings.wa_api_version}"
     token = settings.wa_token
     img = (Path(__file__).parent / "data" / "brand" / "whatsapp_profile.jpg").read_bytes()
-    out = []
-    # 1) upload the picture with Meta's resumable upload API -> a handle
-    r = httpx.post(f"{base}/{settings.wa_app_id}/uploads",
-                   params={"file_length": len(img), "file_type": "image/jpeg", "access_token": token}, timeout=30)
-    out.append(f"Start upload: {r.status_code} {r.text[:200]}")
-    handle = None
-    if r.status_code == 200 and r.json().get("id"):
-        r2 = httpx.post(f"{base}/{r.json()['id']}", content=img,
-                        headers={"Authorization": f"OAuth {token}", "file_offset": "0"}, timeout=60)
-        out.append(f"Upload picture: {r2.status_code} {r2.text[:200]}")
-        if r2.status_code == 200:
-            handle = r2.json().get("h")
+    handle, out = _upload_to_meta(img, "image/jpeg")
     # 2) set the profile
     body = {"messaging_product": "whatsapp", "about": form.get("about", "")[:139],
             "description": form.get("description", "")[:512], "vertical": "OTHER"}
@@ -281,6 +270,85 @@ async def whatsapp_profile(request: Request, key: str = ""):
     out.append(f"Update profile: {r3.status_code} {r3.text[:300]}")
     res = "".join(f"<pre style='white-space:pre-wrap'>{html_escape(o)}</pre>" for o in out)
     return pages._page("WhatsApp profile", f"<h1>Result</h1>{res}<p><a href='/admin?key={html_escape(key)}'>Back to admin</a></p>")
+
+
+def _upload_to_meta(data: bytes, mime: str) -> tuple[str | None, list[str]]:
+    """Meta resumable upload -> file handle (for profile pictures and template samples)."""
+    import httpx
+    base = f"https://graph.facebook.com/{settings.wa_api_version}"
+    token, out = settings.wa_token, []
+    r = httpx.post(f"{base}/{settings.wa_app_id}/uploads",
+                   params={"file_length": len(data), "file_type": mime, "access_token": token}, timeout=30)
+    out.append(f"Start upload: {r.status_code} {r.text[:200]}")
+    if r.status_code != 200 or not r.json().get("id"):
+        return None, out
+    r2 = httpx.post(f"{base}/{r.json()['id']}", content=data,
+                    headers={"Authorization": f"OAuth {token}", "file_offset": "0"}, timeout=60)
+    out.append(f"Upload file: {r2.status_code} {r2.text[:120]}")
+    return (r2.json().get("h") if r2.status_code == 200 else None), out
+
+
+def _template_defs(header_handle: str | None) -> list[dict]:
+    dinner = [
+        {"type": "BODY",
+         "text": "Tonight's dinner idea: {{1}} ({{2}} min). {{3}} Tap below to cook it or get another idea.",
+         "example": {"body_text": [["Chicken and mushroom pasta", "30",
+                                    "Uses up your mushrooms before they go off. Everything's at home."]]}},
+        {"type": "BUTTONS", "buttons": [{"type": "QUICK_REPLY", "text": "Let's cook it"},
+                                        {"type": "QUICK_REPLY", "text": "Something else"},
+                                        {"type": "QUICK_REPLY", "text": "Show recipe"}]},
+    ]
+    if header_handle:
+        dinner.insert(0, {"type": "HEADER", "format": "IMAGE", "example": {"header_handle": [header_handle]}})
+    return [
+        {"name": settings.tpl_dinner, "language": "en", "category": "UTILITY", "components": dinner},
+        {"name": settings.tpl_checkin, "language": "en", "category": "UTILITY", "components": [
+            {"type": "BODY", "text": "Quick check: did you cook the {{1}}? Tap below and I'll update your kitchen list.",
+             "example": {"body_text": [["chicken and mushroom pasta"]]}},
+            {"type": "BUTTONS", "buttons": [{"type": "QUICK_REPLY", "text": "Cooked it"},
+                                            {"type": "QUICK_REPLY", "text": "Didn't cook"}]}]},
+        {"name": settings.tpl_notice, "language": "en", "category": "UTILITY", "components": [
+            {"type": "BODY", "text": "Dinner 101 update: {{1}} Reply here if you have any questions.",
+             "example": {"body_text": [["Your free trial ends in 2 days. Keep getting dinner ideas for R39 a month."]]}}]},
+    ]
+
+
+@app.get("/admin/whatsapp-templates", response_class=HTMLResponse)
+def whatsapp_templates(key: str = "", waba_id: str = "1674792774359283"):
+    _check_admin(key)
+    import httpx
+    base = f"https://graph.facebook.com/{settings.wa_api_version}"
+    r = httpx.get(f"{base}/{waba_id}/message_templates", params={"fields": "name,status,category,rejected_reason", "limit": 50},
+                  headers={"Authorization": f"Bearer {settings.wa_token}"}, timeout=30)
+    rows = ""
+    if r.status_code == 200:
+        for t in r.json().get("data", []):
+            rows += (f"<tr><td>{html_escape(t.get('name',''))}</td><td>{html_escape(t.get('status',''))}</td>"
+                     f"<td>{html_escape(t.get('category',''))}</td><td>{html_escape(str(t.get('rejected_reason') or ''))}</td></tr>")
+    else:
+        rows = f"<tr><td colspan=4><pre>{html_escape(r.text[:300])}</pre></td></tr>"
+    return pages._page("WhatsApp templates", f"""<h1>WhatsApp message templates</h1>
+<p>Templates let the bot message people first (the daily dinner idea, check-ins, account notices).
+Meta reviews each one; this usually takes minutes, sometimes up to a day.</p>
+<table style="width:100%;border-collapse:collapse" border="1" cellpadding="6"><tr><th>Name</th><th>Status</th><th>Category</th><th>Reason</th></tr>{rows}</table>
+<form method="post" action="/admin/whatsapp-templates?key={html_escape(key)}&amp;waba_id={html_escape(waba_id)}" style="margin-top:20px">
+<button class="btn" style="border:0">Create / submit the 3 templates</button></form>""")
+
+
+@app.post("/admin/whatsapp-templates", response_class=HTMLResponse)
+def whatsapp_templates_create(key: str = "", waba_id: str = "1674792774359283"):
+    _check_admin(key)
+    import httpx
+    base = f"https://graph.facebook.com/{settings.wa_api_version}"
+    sample = (Path(__file__).parent / "data" / "brand" / "whatsapp_profile.jpg").read_bytes()
+    handle, out = _upload_to_meta(sample, "image/jpeg")
+    for t in _template_defs(handle):
+        r = httpx.post(f"{base}/{waba_id}/message_templates", json=t,
+                       headers={"Authorization": f"Bearer {settings.wa_token}"}, timeout=30)
+        out.append(f"{t['name']}: {r.status_code} {r.text[:300]}")
+    res = "".join(f"<pre style='white-space:pre-wrap'>{html_escape(o)}</pre>" for o in out)
+    return pages._page("WhatsApp templates", f"<h1>Result</h1>{res}"
+                       f"<p><a href='/admin/whatsapp-templates?key={html_escape(key)}'>See template status</a></p>")
 
 
 def html_escape(s: str) -> str:

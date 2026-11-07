@@ -580,7 +580,8 @@ def send_dinner(s: Session, user: User, force: bool = False, exclude: set | None
     btns = [(f"cook:{sg.id}", "Let's cook it"), (f"other:{sg.id}", "Something else"), (f"recipe:{sg.id}", "Show recipe")]
     image = photos.url_for(r["id"])
     fallback = wa.buttons(body, btns, image=image)
-    send(s, user, wa.template(settings.tpl_dinner, [r["name"], str(r["minutes"]), uses], fallback, image=image,
+    tpl_image = image or f"{settings.public_base_url.rstrip('/')}/brand/logo.png"
+    send(s, user, wa.template(settings.tpl_dinner, [r["name"], str(r["minutes"]), uses], fallback, image=tpl_image,
                               button_ids=[b[0] for b in btns]))
     return sg
 
