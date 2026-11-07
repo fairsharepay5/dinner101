@@ -417,6 +417,9 @@ async def sim_clock(request: Request):
     phone = body.get("phone", "sim-1")
     _sim_guard(phone)
     to = body.get("to")
+    if settings.whatsapp_enabled:
+        # Time travel moves the clock for everyone, so never on the live WhatsApp bot.
+        raise HTTPException(403, "Time travel is disabled on the live server")
     now = clock.now()
     with session_scope() as s:
         user = s.scalar(select(User).where(User.phone == phone))
