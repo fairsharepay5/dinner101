@@ -42,6 +42,7 @@ class Settings:
     wa_app_secret: str = field(default_factory=lambda: _get("WHATSAPP_APP_SECRET"))
     wa_display_number: str = field(default_factory=lambda: _get("WHATSAPP_DISPLAY_NUMBER", "27000000000"))
     wa_api_version: str = field(default_factory=lambda: _get("WHATSAPP_API_VERSION", "v21.0"))
+    wa_app_id: str = field(default_factory=lambda: _get("WHATSAPP_APP_ID", "2105299150095439"))
     # Approved template names (create these in Meta Business Manager, see README)
     tpl_dinner: str = field(default_factory=lambda: _get("WA_TEMPLATE_DINNER", "dinner_tonight"))
     tpl_checkin: str = field(default_factory=lambda: _get("WA_TEMPLATE_CHECKIN", "dinner_checkin"))

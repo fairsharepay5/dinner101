@@ -2,6 +2,7 @@
 
 Run:  uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
+from pathlib import Path
 import asyncio
 import logging
 import urllib.parse
@@ -213,6 +214,73 @@ async def whatsapp_setup(request: Request, key: str = ""):
     out.append(f"Subscribe account to app: {r.status_code} {r.text[:300]}")
     body = "".join(f"<pre style='white-space:pre-wrap'>{html_escape(o)}</pre>" for o in out)
     return pages._page("WhatsApp setup", f"<h1>Result</h1>{body}<p><a href='/admin?key={key}'>Back to admin</a></p>")
+
+
+PROFILE_ABOUT = "Dinner ideas from what's already in your kitchen 🍽️ Smart meals. Less waste."
+PROFILE_DESCRIPTION = (
+    "Dinner 101 tells you what to cook tonight from what's already in your fridge and cupboard. "
+    "Send a voice note of your kitchen or a photo of your till slip, and every afternoon you get one dinner idea "
+    "made from what you have, using up what's about to go off first. Tap \"Cooked it\" and your kitchen list "
+    "updates itself. Planning a braai or dinner for friends? Ask what you need and get a ready shopping list. "
+    "Free for 7 days. Just say Hi to start.")
+PROFILE_WEBSITE = "https://www.instagram.com/getdinner101"
+
+
+@app.get("/admin/whatsapp-profile", response_class=HTMLResponse)
+def whatsapp_profile_form(key: str = ""):
+    _check_admin(key)
+    esc = html_escape
+    return pages._page("WhatsApp profile", f"""<h1>WhatsApp business profile</h1>
+<p>Sets the profile picture (the Dinner 101 logo) and the business info people see when they tap the chat name.</p>
+<img src="/brand/whatsapp_profile.jpg" alt="Dinner 101 logo" style="width:180px;height:180px;border-radius:90px;display:block;margin:12px 0">
+<form method="post" action="/admin/whatsapp-profile?key={esc(key)}">
+<p><label>About (max 139 characters)<br><input name="about" maxlength="139" value="{esc(PROFILE_ABOUT)}" style="width:100%;font-size:15px;padding:6px"></label></p>
+<p><label>Description (max 512 characters)<br><textarea name="description" maxlength="512" rows="7" style="width:100%;font-size:15px;padding:6px">{esc(PROFILE_DESCRIPTION)}</textarea></label></p>
+<p><label>Website<br><input name="website" value="{esc(PROFILE_WEBSITE)}" style="width:100%;font-size:15px;padding:6px"></label></p>
+<button class="btn" style="border:0">Update WhatsApp profile</button></form>""")
+
+
+@app.get("/brand/{name}")
+def brand_file(name: str):
+    from fastapi.responses import FileResponse
+    allowed = {"whatsapp_profile.jpg", "logo.png", "launch-poster.png"}
+    if name not in allowed:
+        raise HTTPException(404)
+    return FileResponse(Path(__file__).parent / "data" / "brand" / name)
+
+
+@app.post("/admin/whatsapp-profile", response_class=HTMLResponse)
+async def whatsapp_profile(request: Request, key: str = ""):
+    _check_admin(key)
+    import httpx
+    form = dict(urllib.parse.parse_qsl((await request.body()).decode()))
+    base = f"https://graph.facebook.com/{settings.wa_api_version}"
+    token = settings.wa_token
+    img = (Path(__file__).parent / "data" / "brand" / "whatsapp_profile.jpg").read_bytes()
+    out = []
+    # 1) upload the picture with Meta's resumable upload API -> a handle
+    r = httpx.post(f"{base}/{settings.wa_app_id}/uploads",
+                   params={"file_length": len(img), "file_type": "image/jpeg", "access_token": token}, timeout=30)
+    out.append(f"Start upload: {r.status_code} {r.text[:200]}")
+    handle = None
+    if r.status_code == 200 and r.json().get("id"):
+        r2 = httpx.post(f"{base}/{r.json()['id']}", content=img,
+                        headers={"Authorization": f"OAuth {token}", "file_offset": "0"}, timeout=60)
+        out.append(f"Upload picture: {r2.status_code} {r2.text[:200]}")
+        if r2.status_code == 200:
+            handle = r2.json().get("h")
+    # 2) set the profile
+    body = {"messaging_product": "whatsapp", "about": form.get("about", "")[:139],
+            "description": form.get("description", "")[:512], "vertical": "OTHER"}
+    if form.get("website"):
+        body["websites"] = [form["website"]]
+    if handle:
+        body["profile_picture_handle"] = handle
+    r3 = httpx.post(f"{base}/{settings.wa_phone_number_id}/whatsapp_business_profile",
+                    headers={"Authorization": f"Bearer {token}"}, json=body, timeout=30)
+    out.append(f"Update profile: {r3.status_code} {r3.text[:300]}")
+    res = "".join(f"<pre style='white-space:pre-wrap'>{html_escape(o)}</pre>" for o in out)
+    return pages._page("WhatsApp profile", f"<h1>Result</h1>{res}<p><a href='/admin?key={html_escape(key)}'>Back to admin</a></p>")
 
 
 def html_escape(s: str) -> str:
