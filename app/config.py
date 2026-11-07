@@ -51,6 +51,7 @@ class Settings:
     # AI
     anthropic_api_key: str = field(default_factory=lambda: _get("ANTHROPIC_API_KEY"))
     parse_model: str = field(default_factory=lambda: _get("PARSE_MODEL", "claude-sonnet-5-5"))
+    assistant_model: str = field(default_factory=lambda: _get("ASSISTANT_MODEL", "claude-opus-5-5"))
     openai_api_key: str = field(default_factory=lambda: _get("OPENAI_API_KEY"))
     transcribe_model: str = field(default_factory=lambda: _get("TRANSCRIBE_MODEL", "whisper-1"))
     image_model: str = field(default_factory=lambda: _get("IMAGE_MODEL", "gpt-image-1"))

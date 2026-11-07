@@ -54,6 +54,11 @@ def send(s: Session, user: User, msg: dict) -> None:
         kind, usd = "wa_service", wa.PRICE_SERVICE
     wa.send(user.phone, msg)
     s.add(Usage(user_id=user.id, kind=kind, usd=usd, detail=msg.get("name") or msg["type"]))
+    shown = msg.get("body") or ""
+    if msg.get("buttons"):
+        shown += "  [buttons: " + ", ".join(t for _, t in msg["buttons"]) + "]"
+    if shown:
+        _remember_chat(user, "b", shown)
 
 
 def say(s, user, body):
@@ -218,8 +223,8 @@ def on_text(s: Session, user: User, text: str, source: str = "voice") -> None:
 
 
 def _remember_chat(user: User, role: str, text: str) -> None:
-    hist = list((user.pending or {}).get("chat", []))[-9:]
-    hist.append([role, (text or "")[:400]])
+    hist = list((user.pending or {}).get("chat", []))[-15:]
+    hist.append([role, (text or "")[:900]])
     _set_pending(user, chat=hist)
 
 
@@ -238,13 +243,10 @@ def assistant_turn(s: Session, user: User, text: str, source: str) -> bool:
     intent = data.get("intent") if data.get("intent") in ("dinner", "set_time", "plan", "list", "set_people") else None
     if actions:
         apply_actions(s, user, actions, source="setup" if user.stage == "setup" else source, note=reply)
-        if reply:
-            _remember_chat(user, "b", reply)
         if user.stage == "setup" or (user.pending or {}).get("storage_q"):
             return True
     elif reply:
         say(s, user, reply)
-        _remember_chat(user, "b", reply)
     if intent == "set_people":
         try:
             people = int(data.get("people") or 0)
@@ -741,6 +743,7 @@ def _after_checkin(s: Session, user: User) -> None:
 # ======================================================================
 
 def on_button(s: Session, user: User, bid: str) -> None:
+    _remember_chat(user, "u", f"[tapped button {bid.split(':')[0]}]")
     parts = bid.split(":")
     action = parts[0]
     sg = None
