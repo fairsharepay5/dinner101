@@ -41,3 +41,16 @@ def _add_missing_columns() -> None:
             for k, w in PIECE_G.items():
                 conn.execute(text("UPDATE pantry_items SET piece_g = :w, qty = qty * :w "
                                   "WHERE key = :k AND unit IN ('g','ml') AND qty < 20"), {"k": k, "w": float(w)})
+
+
+@contextmanager
+def session_scope():
+    s = SessionLocal()
+    try:
+        yield s
+        s.commit()
+    except Exception:
+        s.rollback()
+        raise
+    finally:
+        s.close()
