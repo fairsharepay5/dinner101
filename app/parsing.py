@@ -31,6 +31,7 @@ class Understood:
     other: str | None = None    # message isn't about the pantry (a question, a command)
     intent: str | None = None   # dinner | set_time | list | help (what they want besides pantry changes)
     time: str | None = None     # "HH:MM" for set_time
+    place: str | None = None    # fridge | freezer | cupboard | counter, for a "what's in my ..." question
 
 
 # ======================================================================
@@ -246,14 +247,16 @@ Rules:
 - intent: what the person wants besides changing their kitchen list, in any wording or language:
   "dinner" = they want a meal idea now (what can I make/cook/eat tonight, what's for supper, wat kan ek vanaand maak, I'm hungry, give me an idea);
   "set_time" = they want the daily dinner message at another time (send it at six, change dinner time to half past five, stuur dit om sesuur) -> also fill time as 24h HH:MM; evening hours given without am/pm are pm (six -> 18:00, half five -> 17:30);
-  "list" = they want to see what's in their kitchen; "help" = they ask how this works; else null.
+  "list" = they ask what food they have (what's in my fridge/freezer/pantry, wat is in die yskas) -> also set place if they name one (pantry/cupboard/kas = cupboard);
+  "plan" = they are planning a meal or occasion and ask what they need (braai for 6, birthday lunch for 10, what do I need for lasagne for 4) - do NOT add those foods to the kitchen list;
+  "help" = they ask how this works; else null.
   A message can both add items and have an intent ("bought chicken, what can I make tonight?").
 Reply with JSON only."""
 
 SLIP_SCHEMA = '{"items":[{"raw":"slip line","name":"..","key":"..|null","qty":n|null,"unit":"..|null","price_cents":n|null,"category":"..|null","shelf_days":n|null}]}'
 MSG_SCHEMA = ('{"actions":[{"op":"add","name":"..","key":"..|null","qty":n|null,"unit":"..|null","storage":"..|null","category":"..|null","shelf_days":n|null},'
               '{"op":"remove","key":"..","reason":"finished|binned","qty":n|null},{"op":"set","key":"..","qty":n}],'
-              '"intent":"dinner|set_time|list|help|null","time":"HH:MM|null",'
+              '"intent":"dinner|set_time|list|plan|help|null","time":"HH:MM|null","place":"fridge|freezer|cupboard|counter|null",'
               '"other":"the message text if it is NOT about adding/removing kitchen items, else null"}')
 
 
@@ -300,8 +303,12 @@ def ai_read_slip(image: bytes, mime: str) -> list[ParsedItem]:
 def ai_understand(text: str) -> Understood:
     data = _ask_claude([{"type": "text", "text": f"Message from the household (may be a voice-note transcript):\n\"\"\"{text}\"\"\""}], MSG_SCHEMA)
     u = Understood(other=data.get("other"))
-    if data.get("intent") in ("dinner", "set_time", "list", "help"):
+    if data.get("intent") in ("dinner", "set_time", "list", "plan", "help"):
         u.intent = data["intent"]
+    if data.get("place") in ("fridge", "freezer", "cupboard", "counter"):
+        u.place = data["place"]
+    if u.intent == "plan":
+        u.actions = []          # planned food is not in the kitchen yet
     if isinstance(data.get("time"), str) and re.fullmatch(r"\d{1,2}:\d{2}", data["time"]):
         h, m = data["time"].split(":")
         u.time = f"{int(h):02d}:{m}"
@@ -358,3 +365,37 @@ def read_slip(image: bytes | None = None, mime: str = "image/jpeg", text: str | 
     if text is not None:
         return parse_slip_text(text)
     raise RuntimeError("Slip photos need ANTHROPIC_API_KEY to be read.")
+
+
+# ======================================================================
+# Occasion planning ("braai for 6 tonight, what do I need?")
+# ======================================================================
+
+PLAN_SYSTEM = """You help a South African household plan food for a meal or occasion using what they already have.
+You get their request and their current kitchen list (key, name, amount if known, where it is).
+Work out a sensible menu from their request (keep to what they asked for; fill obvious gaps like bread, salads, sauces only if typical),
+scaled to the number of people. Then split it into what they already have and what they need to buy.
+Amounts to buy: practical shop amounts (e.g. "1.5 kg rump steak", "2 loaves white bread", "1 pack braai spice").
+For things at home, estimate how much of it this will use in the key's unit, so we can take it off their list afterwards.
+If an at-home amount is unknown, assume they have enough unless clearly not (e.g. 1 onion for 6 people).
+Write in plain friendly English (mirror Afrikaans words they use, like braaibroodjies, boerewors).
+Reply with JSON only."""
+
+PLAN_SCHEMA = ('{"title":"short e.g. Braai for 6","people":n|null,"event_date":"YYYY-MM-DD|null",'
+               '"checkin_question":"short personal question for the next morning, e.g. Did you braai last night? 🔥",'
+               '"yes_label":"button text <= 20 chars, e.g. Yes, we braaied",'
+               '"have":[{"key":"kitchen key","name":"..","use_qty":n|null}],'
+               '"buy":[{"name":"..","amount":".."}],"tip":"one short optional idea using what they have, or null"}')
+
+
+def ai_plan(request: str, kitchen_lines: list[str], today: str) -> dict:
+    from .config import settings
+    content = (f"Today is {today}.\nRequest:\n\"\"\"{request}\"\"\"\n\nKitchen list:\n" + "\n".join(kitchen_lines)
+               + f"\n\nReturn JSON exactly in this shape: {PLAN_SCHEMA}")
+    resp = _client().messages.create(model=settings.parse_model, max_tokens=2000, system=PLAN_SYSTEM,
+                                     messages=[{"role": "user", "content": content}])
+    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise ValueError(f"No JSON in plan reply: {text[:200]}")
+    return json.loads(m.group(0))

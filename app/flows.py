@@ -170,6 +170,16 @@ def on_voice(s: Session, user: User, inb: Inbound) -> None:
 
 
 def on_text(s: Session, user: User, text: str, source: str = "voice") -> None:
+    plan = (user.pending or {}).get("plan")
+    if plan and plan.get("asked"):
+        t = text.strip().lower().strip("!. ")
+        if re.fullmatch(r"(yes|yep|ja|jip|yes we did|ja ons het|we did)", t):
+            plan_answer(s, user, True)
+            return
+        if re.fullmatch(r"(no|nope|nee|it didn'?t|we didn'?t)", t):
+            plan_answer(s, user, False)
+            return
+        _pop_pending(user, "plan")    # a voice note of what was used: handled as normal changes below
     cmd = command_for(text)
     if cmd and not (settings.ai_enabled and cmd in ("dinner", "time") and len(text.split()) > 6):
         run_command(s, user, cmd, text)
@@ -190,7 +200,9 @@ def on_text(s: Session, user: User, text: str, source: str = "voice") -> None:
         elif u.intent == "set_time":
             set_dinner_time(s, user, u.time or parse_time(text))
         elif u.intent == "list":
-            say(s, user, pantry.list_text(s, user))
+            say(s, user, pantry.list_text(s, user, u.place))
+        elif u.intent == "plan":
+            plan_occasion(s, user, text)
         else:
             say(s, user, help_text())
         return
@@ -301,7 +313,7 @@ def _learn_aliases(s: Session, items: list) -> None:
 
 def command_for(text: str) -> str | None:
     t = text.strip().lower()
-    if re.fullmatch(r"(see )?(my )?(list|lys|kitchen|pantry|inventory)\??|what do i have\??|wat het ek\??", t):
+    if re.fullmatch(r"(see )?(my )?(list|lys|kitchen|pantry|inventory)\??|what do i have\??|wat het ek\??", t) or place_asked(t):
         return "list"
     if parse_time(t) and re.search(r"\b(send|stuur|change|move|verander|dinner|supper|aandete|time|tyd|message|boodskap|remind)\b", t):
         return "time"
@@ -320,6 +332,23 @@ def command_for(text: str) -> str | None:
         return "delete"
     if _is_greeting(t):
         return "help"
+    return None
+
+
+_PLACE_WORDS = [("freezer", r"freezer|vrieskas|vriesier|deep ?freeze"), ("fridge", r"fridge|yskas|refrigerator"),
+                ("cupboard", r"pantry|cupboard|kas|spens|grocery cupboard"), ("counter", r"counter|toonbank")]
+
+
+def place_asked(t: str) -> str | None:
+    """'what's in my freezer?' -> 'freezer'; 'what food do we have' -> 'all'."""
+    t = t.lower()
+    if not re.search(r"\b(what|wat|show|wys|list)\b", t):
+        return None
+    for place, pat in _PLACE_WORDS:
+        if re.search(rf"\b(in|inside|uit)\b.*\b({pat})\b", t):
+            return place
+    if re.search(r"what (food )?(do|have) (i|we) (have|got)|wat (kos )?het (ek|ons)", t):
+        return "all"
     return None
 
 
@@ -369,7 +398,8 @@ def set_dinner_time(s: Session, user: User, hhmm: str | None) -> None:
 
 def run_command(s: Session, user: User, cmd: str, text: str) -> None:
     if cmd == "list":
-        say(s, user, pantry.list_text(s, user))
+        pl = place_asked(text)
+        say(s, user, pantry.list_text(s, user, None if pl in (None, "all") else pl))
     elif cmd == "dinner":
         send_dinner(s, user, force=True)
     elif cmd == "time":
@@ -396,6 +426,96 @@ def delete_user(s: Session, user: User) -> None:
         else:
             s.execute(delete(model).where(model.user_id == user.id))
     s.delete(user)
+
+
+# ======================================================================
+# Occasions: "braai for 6 tonight, what do I need?"
+# ======================================================================
+
+def _kitchen_lines(s: Session, user: User) -> list[str]:
+    out = []
+    for it in pantry.active_items(s, user):
+        if pantry.status(it) == "gone":
+            continue
+        amt = pantry.shown_qty([it], it.qty, it.unit) or "amount unknown"
+        out.append(f"{it.key} | {it.name} | {amt} (tracked as {round(it.qty)} {it.unit}) | {it.storage}")
+    return out
+
+
+def plan_occasion(s: Session, user: User, text: str) -> None:
+    if not settings.ai_enabled:
+        say(s, user, "Planning for a braai or a crowd isn't switched on yet. Try again a bit later.")
+        return
+    try:
+        plan = parsing.ai_plan(text, _kitchen_lines(s, user), clock.now().strftime("%A %Y-%m-%d"))
+    except Exception:  # noqa: BLE001
+        log.exception("plan failed")
+        say(s, user, "Sorry, I couldn't work that out right now. Please try again in a minute.")
+        return
+    s.add(Usage(user_id=user.id, kind="ai_plan", usd=0.01, detail=(plan.get("title") or "")[:200]))
+
+    have = [h for h in plan.get("have", []) if h.get("key")]
+    buy = [b for b in plan.get("buy", []) if b.get("name")]
+    title = plan.get("title") or "Your plan"
+    lines = [f"🔥 *{title}*"]
+    if have:
+        lines.append("\n✅ *Already at home:*\n" + "\n".join(f"• {h.get('name') or h['key']}" for h in have))
+    if buy:
+        lines.append("\n🛒 *To buy:*\n" + "\n".join(f"• {b['name']}" + (f" ({b['amount']})" if b.get("amount") else "") for b in buy))
+    else:
+        lines.append("\n🛒 You've got everything. Nothing to buy!")
+    if plan.get("tip"):
+        lines.append(f"\n💡 {plan['tip']}")
+    say(s, user, "\n".join(lines))
+    if buy:
+        # a clean list on its own, easy to copy or forward
+        say(s, user, f"Shopping list: {title}\n" + "\n".join(f"- {b['name']}" + (f", {b['amount']}" if b.get("amount") else "") for b in buy))
+
+    # check in the morning after the event
+    try:
+        day = datetime.strptime(plan.get("event_date") or "", "%Y-%m-%d")
+    except ValueError:
+        day = clock.now()
+    due = (day + timedelta(days=1)).replace(hour=9, minute=30, second=0, microsecond=0)
+    _set_pending(user, plan={
+        "title": title,
+        "question": (plan.get("checkin_question") or f"Did the {title.lower()} happen?")[:200],
+        "yes": (plan.get("yes_label") or "Yes")[:20],
+        "use": [[h["key"], h.get("use_qty")] for h in have],
+        "due": due.isoformat(),
+    })
+
+
+def send_plan_checkin(s: Session, user: User) -> None:
+    plan = (user.pending or {}).get("plan")
+    if not plan:
+        return
+    plan = dict(plan, asked=True)
+    _set_pending(user, plan=plan)
+    body = f"{plan['question']}\n\nTap yes and I'll take off what you used from home, or send a voice note of what was used."
+    btns = [("plan:yes", plan["yes"]), ("plan:no", "No, it didn't")]
+    send(s, user, wa.template(settings.tpl_notice, [plan["question"] + " Reply yes, or send a voice note of what you used."],
+                              wa.buttons(body, btns)))
+
+
+def plan_answer(s: Session, user: User, yes: bool) -> None:
+    plan = _pop_pending(user, "plan")
+    if not plan:
+        say(s, user, "👍")
+        return
+    if not yes:
+        say(s, user, "No problem, I haven't changed anything. 👍")
+        return
+    needs = []
+    for key, q in plan.get("use", []):
+        st = pantry.stock(s, user).get(key)
+        if not st:
+            continue
+        needs.append((key, float(q) if q else st["qty"]))
+    if needs:
+        pantry.deduct(s, user, needs)
+    say(s, user, "✅ Done, I've taken off what you used from home. "
+                 "If anything's different (e.g. \"there's still half the steak left\"), just send a voice note.")
 
 
 def help_text() -> str:
@@ -520,7 +640,7 @@ def on_button(s: Session, user: User, bid: str) -> None:
     parts = bid.split(":")
     action = parts[0]
     sg = None
-    if len(parts) > 1 and action not in ("store",):
+    if len(parts) > 1 and action not in ("store", "plan"):
         try:
             sg = s.get(Suggestion, int(parts[1]))
         except ValueError:
@@ -543,6 +663,8 @@ def on_button(s: Session, user: User, bid: str) -> None:
         queue = [i for i in (user.pending or {}).get("storage_q", []) if i != int(parts[1])]
         _set_pending(user, storage_q=queue)
         ask_next_storage(s, user)
+    elif action == "plan" and len(parts) == 2:
+        plan_answer(s, user, parts[1] == "yes")
     elif action == "pay":
         send_payment_prompt(s, user)
     elif sg is None:

@@ -62,6 +62,17 @@ def _tick_user(s, user: User, now: datetime, stats: dict) -> None:
             flows.send_checkin(s, user, sg)
             stats["checkins"] += 1
 
+    # --- morning after a planned occasion: "Did you braai last night?" ---
+    plan = (user.pending or {}).get("plan")
+    if plan and not plan.get("asked"):
+        try:
+            due = datetime.fromisoformat(plan["due"])
+        except (KeyError, ValueError):
+            due = None
+        if due and now >= due and 8 <= now.hour < 20:
+            flows.send_plan_checkin(s, user)
+            stats["checkins"] += 1
+
     # --- tonight's dinner ---
     if now >= _dinner_dt(user, now) and now.hour < 21 and not flows.today_suggestions(s, user):
         if (user.pending or {}).get("dinner_after_checkin"):

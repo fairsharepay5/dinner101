@@ -203,3 +203,43 @@ def test_plain_language_dinner_and_time():
     assert "18:00" in out[0]["body"]
     with session_scope() as s:
         assert s.scalar(select(User).where(User.phone == PHONE)).dinner_time == "18:00"
+
+
+def test_whats_in_my_freezer_and_braai_plan(monkeypatch):
+    from app import parsing
+    from app.config import settings
+    out = onboard()
+    out = tap(buttons_of(out)[1][0])      # mince -> frozen
+    out = tap(buttons_of(out)[0][0])      # chicken -> fridge
+    out = send_text("what's in my freezer?")
+    body = out[0]["body"]
+    assert "Freezer" in body and "mince" in body.lower() and "Chicken" not in body
+    out = send_text("what food do we have")
+    assert "Fridge" in out[0]["body"] and "Freezer" in out[0]["body"]
+
+    # occasion planning (AI faked)
+    monkeypatch.setattr(type(settings), "ai_enabled", property(lambda self: True))
+    monkeypatch.setattr(parsing, "ai_understand", lambda t: parsing.Understood(intent="plan"))
+    monkeypatch.setattr(parsing, "ai_plan", lambda req, lines, today: {
+        "title": "Braai for 6", "people": 6, "event_date": None,
+        "checkin_question": "Did you braai last night? 🔥", "yes_label": "Yes, we braaied",
+        "have": [{"key": "cheese", "name": "Cheddar cheese", "use_qty": 100}],
+        "buy": [{"name": "Rump steak", "amount": "1.5 kg"}, {"name": "White bread", "amount": "2 loaves"}],
+        "tip": None})
+    out = send_text("We're having a braai tonight with 6 friends, braaibroodjies and steak. What do I need?")
+    assert "Braai for 6" in out[0]["body"] and "Rump steak" in out[0]["body"]
+    assert out[1]["body"].startswith("Shopping list")
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        assert "steak" not in {it.key for it in pantry.active_items(s, user)}   # planned food isn't added
+        before = pantry.stock(s, user)["cheese"]["qty"]
+
+    clock.set_to((clock.now() + timedelta(days=1)).replace(hour=9, minute=35))   # next morning
+    scheduler.tick()
+    out = wa.sim_outbox.take(PHONE)
+    assert any("Did you braai last night" in (m.get("body") or "") for m in out)
+    out = tap("plan:yes")
+    assert "taken off" in out[0]["body"]
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        assert pantry.stock(s, user)["cheese"]["qty"] == before - 100

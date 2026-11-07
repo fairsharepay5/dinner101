@@ -371,21 +371,32 @@ def item_line(it: PantryItem) -> str:
     return f"{it.name} {q}".strip()
 
 
-def list_text(s: Session, user: User) -> str:
-    st = stock(s, user)
-    soon, rest = [], []
-    for key, d in st.items():
-        if d["category"] == "staple":
+PLACE_TITLE = {"fridge": "🧊 Fridge", "freezer": "❄️ Freezer", "cupboard": "🥫 Cupboard", "counter": "🍞 Counter"}
+PLACE_NAME = {"fridge": "fridge", "freezer": "freezer", "cupboard": "cupboard", "counter": "counter"}
+
+
+def list_text(s: Session, user: User, place: str | None = None) -> str:
+    """Everything in the house grouped by where it is, or just one place. ⚠️ = use soon."""
+    groups: dict[str, list[str]] = {}
+    for it in active_items(s, user):
+        if it.category == "staple" or status(it) == "gone":
             continue
-        name = d["items"][0].name if d["items"] else key
-        line = f"{name} {shown_qty(d['items'], d['qty'], d['unit'])}".strip()
-        (soon if d["status"] == "use_soon" else rest).append(line)
-    if not soon and not rest:
+        where = it.storage if it.storage in PLACE_TITLE else "cupboard"
+        if place and where != place:
+            continue
+        line = item_line(it)
+        if status(it) == "use_soon":
+            line = "⚠️ " + line + " (use soon)"
+        groups.setdefault(where, []).append(line)
+    if not groups:
+        if place:
+            return f"Nothing in your {PLACE_NAME[place]} on my list. Send a voice note if I've missed something."
         return "Your kitchen list is empty. Send a voice note or a slip photo to add items."
     parts = []
-    if soon:
-        parts.append("Use soon:\n" + "\n".join(f"• {l}" for l in sorted(soon)))
-    if rest:
-        parts.append("In your kitchen:\n" + "\n".join(f"• {l}" for l in sorted(rest)))
-    parts.append("(Salt, oil, spices and other basics are assumed.)")
+    for where in ("fridge", "freezer", "cupboard", "counter"):
+        if where in groups:
+            lines = sorted(set(groups[where]), key=lambda l: (not l.startswith("⚠️"), l))
+            parts.append(f"*{PLACE_TITLE[where]}*\n" + "\n".join(f"• {l}" for l in lines))
+    if not place:
+        parts.append("(Salt, oil, spices and other basics are assumed.)")
     return "\n\n".join(parts)
