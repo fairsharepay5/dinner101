@@ -46,7 +46,7 @@ Without API keys the bot uses a built-in rule-based reader (English and Afrikaan
 | `app/scheduler.py` | Runs every minute: dinner at each household's time, check-ins, trial reminders, monthly report |
 | `app/whatsapp.py` | WhatsApp Cloud API: send buttons/images/templates, read webhooks, download media |
 | `app/photos.py` | One AI photo per recipe, made once and reused for everyone |
-| `app/billing.py` | 14-day free trial, PayFast monthly subscription link and payment notifications |
+| `app/billing.py` | 7-day free trial, PayFast monthly subscription link and payment notifications |
 | `app/main.py` / `app/pages.py` | Web server: webhook, PayFast, landing/privacy/terms, admin, simulator |
 
 **Background rules built in**

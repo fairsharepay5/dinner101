@@ -56,7 +56,7 @@ class Settings:
 
     # Billing (PayFast)
     price_rands: float = field(default_factory=lambda: float(_get("PRICE_RANDS", "39")))
-    trial_days: int = field(default_factory=lambda: int(_get("TRIAL_DAYS", "14")))
+    trial_days: int = field(default_factory=lambda: int(_get("TRIAL_DAYS", "7")))
     payfast_merchant_id: str = field(default_factory=lambda: _get("PAYFAST_MERCHANT_ID"))
     payfast_merchant_key: str = field(default_factory=lambda: _get("PAYFAST_MERCHANT_KEY"))
     payfast_passphrase: str = field(default_factory=lambda: _get("PAYFAST_PASSPHRASE"))
