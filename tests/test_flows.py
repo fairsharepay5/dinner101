@@ -243,3 +243,29 @@ def test_whats_in_my_freezer_and_braai_plan(monkeypatch):
     with session_scope() as s:
         user = s.scalar(select(User).where(User.phone == PHONE))
         assert pantry.stock(s, user)["cheese"]["qty"] == before - 100
+
+
+def test_checkin_only_when_they_engaged():
+    out = onboard()
+    out = tap(buttons_of(out)[0][0])
+    out = tap(buttons_of(out)[0][0])
+    # day 1: dinner arrives at 16:30, they ignore it -> no check-in that night or next day
+    at(16, 31)
+    scheduler.tick()
+    first = wa.sim_outbox.take(PHONE)
+    assert first, "dinner should be sent"
+    at(20, 0)
+    scheduler.tick()
+    assert not any("cook" in (m.get("body") or "").lower() and "did you" in (m.get("body") or "").lower()
+                   for m in wa.sim_outbox.take(PHONE))
+    at(16, 31, days=1)
+    scheduler.tick()
+    out = wa.sim_outbox.take(PHONE)
+    assert not any("last time" in (m.get("body") or "") for m in out)
+    # day 2: they open the recipe -> check-in comes later that evening
+    sg_btn = next(b for b, t in buttons_of(out) if t == "Show recipe")
+    tap(sg_btn)
+    clock.advance(hours=3)
+    scheduler.tick()
+    out = wa.sim_outbox.take(PHONE)
+    assert any("Cooked it" in [t for _, t in buttons_of([m])] for m in out)

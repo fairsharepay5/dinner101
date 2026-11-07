@@ -698,6 +698,10 @@ def on_button(s: Session, user: User, bid: str) -> None:
         if nxt is None:
             pass
     elif action == "recipe":
+        # Opening the recipe counts as interest: we'll check in later, same as "Let's cook it".
+        if sg.status not in ("accepted", "cooked", "not_cooked", "other_meal", "skipped", "rejected"):
+            sg.status = "accepted"
+            sg.accepted_at = clock.now()
         send(s, user, wa.buttons(recipe_text(s, user, sg), [(f"cook:{sg.id}", "Let's cook it"), (f"other:{sg.id}", "Something else")]))
     elif action == "cooked":
         if sg.status in ("cooked",):
