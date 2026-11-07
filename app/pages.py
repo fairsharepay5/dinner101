@@ -34,22 +34,134 @@ def qr_svg(data: str) -> str:
     return buf.getvalue().decode()
 
 
+BRAND_CSS = """
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:#000;color:#fff;font-family:Poppins,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.55}
+a{color:#FF6A01}
+.w{max-width:1080px;margin:0 auto;padding:0 22px}
+.nav{display:flex;justify-content:space-between;align-items:center;padding:18px 0}
+.nav img{height:96px;width:auto}
+.pill{display:inline-flex;align-items:center;gap:8px;background:#FF6A01;color:#000;font-weight:800;padding:14px 24px;border-radius:999px;text-decoration:none;font-size:17px;min-height:48px}
+.pill:hover{background:#ff8a3a}
+.ghost{color:#fff;text-decoration:none;font-weight:600;border:2px solid #333;border-radius:999px;padding:10px 18px;font-size:15px}
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;padding:40px 0 70px}
+.hero h1{font-size:clamp(40px,6vw,68px);line-height:1.02;margin:0 0 18px;font-weight:800;letter-spacing:-.02em}
+.hero h1 span{color:#FF6A01}
+.lead{font-size:19px;color:#d8d8d8;max-width:520px;margin:0 0 26px}
+.small{color:#a9a9a9;font-size:14px;margin-top:14px}
+.script{font-family:'Kaushan Script',cursive;font-size:clamp(30px,4vw,44px);color:#fff;margin:0}
+.uline{height:5px;width:220px;background:#FF6A01;border-radius:4px;margin:6px 0 0;transform:rotate(-1.5deg)}
+.phone{background:#0d0d0d;border:1px solid #262626;border-radius:28px;padding:18px;max-width:380px;justify-self:center;width:100%}
+.chat{background:#1b1b1b;border-radius:18px;padding:16px}
+.time{text-align:center;color:#9a9a9a;font-size:13px;margin-bottom:10px}
+.bubble{background:#fff;color:#111;border-radius:4px 16px 16px 16px;padding:14px 16px}
+.bubble b{display:block;font-size:17px;margin-bottom:4px}
+.bubble p{margin:0;font-size:14px;color:#333}
+.btns{display:grid;gap:6px;margin-top:6px}
+.btns span{background:#fff;color:#0F6E56;border-radius:12px;text-align:center;padding:10px;font-weight:600;font-size:14px}
+.brush{background:#FF6A01;color:#000;font-weight:800;text-transform:uppercase;font-size:clamp(26px,4.4vw,46px);text-align:center;padding:18px 20px;margin:0 0 60px;transform:rotate(-1.2deg);clip-path:polygon(1% 12%,99% 0,100% 88%,0 100%)}
+.feats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin:0 0 70px}
+.feat{text-align:center;padding:10px 22px;border-left:2px solid #FF6A01}
+.feat:first-child{border-left:0}
+.feat svg{width:64px;height:64px;stroke:#fff;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.feat h3{font-size:18px;text-transform:uppercase;margin:12px 0 6px;font-weight:800;letter-spacing:.02em}
+.feat p{margin:0;color:#bdbdbd;font-size:15px}
+h2{font-size:clamp(30px,4vw,42px);font-weight:800;margin:0 0 26px;letter-spacing:-.01em}
+h2 span{color:#FF6A01}
+.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:70px}
+.step{background:#0f0f0f;border:1px solid #232323;border-radius:20px;padding:22px}
+.num{width:44px;height:44px;border-radius:22px;background:#FF6A01;color:#000;font-weight:800;display:flex;align-items:center;justify-content:center;margin-bottom:12px;font-size:20px}
+.step h3{margin:0 0 6px;font-size:18px}.step p{margin:0;color:#bdbdbd;font-size:15px}
+.braai{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center;background:#111;border-radius:28px;padding:36px;margin-bottom:70px;border:1px solid #232323}
+.braai ul{margin:0;padding-left:20px;color:#d8d8d8}.braai li{margin:4px 0}
+.list{background:#fff;color:#111;border-radius:16px;padding:18px 20px;font-size:15px}
+.list b{display:block;margin-bottom:6px}
+.price{text-align:center;padding:50px 22px;border-top:1px solid #222}
+.price .big{font-size:clamp(44px,7vw,72px);font-weight:800;margin:0}
+.price .big span{color:#FF6A01}
+.qr{background:#fff;border-radius:16px;padding:12px;width:180px;margin:26px auto 8px}
+footer{border-top:1px solid #222;padding:26px 0 40px;color:#9a9a9a;font-size:14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+footer a{color:#d8d8d8;text-decoration:none;margin-right:16px}
+@media (max-width:820px){.hero{grid-template-columns:1fr;padding-top:16px}.steps{grid-template-columns:1fr 1fr}.braai{grid-template-columns:1fr;padding:24px}}
+@media (max-width:560px){.feats{grid-template-columns:1fr;gap:26px}.feat{border-left:0;border-top:2px solid #FF6A01;padding-top:22px}.feat:first-child{border-top:0}.steps{grid-template-columns:1fr}.nav .ghost{display:none}}
+"""
+
+ICON_PANTRY = '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="8" width="44" height="48" rx="3"/><path d="M10 32h44"/><rect x="16" y="16" width="8" height="12" rx="2"/><rect x="28" y="19" width="8" height="9" rx="2"/><rect x="40" y="14" width="8" height="14" rx="2"/><rect x="16" y="40" width="10" height="10" rx="2"/><rect x="31" y="38" width="7" height="12" rx="2"/><rect x="42" y="42" width="7" height="8" rx="2"/></svg>'
+ICON_CAL = '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="12" width="40" height="38" rx="4"/><path d="M8 22h40M18 6v10M38 6v10"/><circle cx="45" cy="46" r="11"/><path d="M45 40v6l4 3"/></svg>'
+ICON_CLOCHE = '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 46h48M12 46a20 20 0 0 1 40 0"/><circle cx="32" cy="23" r="3"/><path d="M26 8c-2 3 2 4 0 7M32 6c-2 3 2 4 0 7M38 8c-2 3 2 4 0 7"/><path d="M6 52h52"/></svg>'
+
+
 def landing() -> str:
     link = wa_link()
-    return _page("Dinner 101 - what's for dinner, sorted", f"""
-<p class="muted">Dinner 101</p>
-<h1>What's for dinner? Sorted, on WhatsApp.</h1>
-<p>Every afternoon Dinner 101 sends you <b>one dinner idea</b> made from what's already in your kitchen, and uses up food before it goes off.</p>
-<p><a class="btn" href="{link}">Start on WhatsApp</a></p>
-<p class="muted">{settings.trial_days} days free, then R{settings.price_rands:.0f}/month. Cancel any time.</p>
-<div class="card"><h3>How it works</h3>
-<ol><li><b>Send a voice note</b> of what's in your kitchen. Walk around and talk.</li>
-<li><b>Snap your till slip</b> after shopping, or send a voice note of what you bought.</li>
-<li><b>Get tonight's dinner</b> on WhatsApp with a photo. Tap "Let's cook it".</li>
-<li><b>See what you saved</b> every month, in Rand.</li></ol></div>
-<div class="card" style="text-align:center"><p>Scan to start on WhatsApp</p><div style="width:200px;margin:0 auto">{qr_svg(link)}</div></div>
-<p class="muted" style="margin-top:40px"><a href="https://www.instagram.com/getdinner101/">Instagram @getdinner101</a> · <a href="/privacy">Privacy policy</a> · <a href="/terms">Terms</a></p>
-""")
+    days = settings.trial_days
+    price = f"R{settings.price_rands:.0f}"
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dinner 101 · Smart meals. Less waste.</title>
+<meta name="description" content="One dinner idea a day on WhatsApp, made from what's already in your kitchen. Try it free for {days} days.">
+<meta property="og:title" content="Dinner 101 · Smart meals. Less waste."><meta property="og:image" content="/brand/logo.png">
+<link rel="icon" href="/brand/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Kaushan+Script&family=Poppins:wght@400;600;800&display=swap" rel="stylesheet">
+<style>{BRAND_CSS}</style></head><body>
+<div class="w">
+<nav class="nav"><a href="/" aria-label="Dinner 101 home"><img src="/brand/logo.png" alt="Dinner 101"></a><a class="ghost" href="{link}">Start on WhatsApp</a></nav>
+
+<section class="hero">
+<div>
+<h1>What's for dinner?<br><span>It's already in your kitchen.</span></h1>
+<p class="lead">Every afternoon Dinner 101 sends you <b>one dinner idea</b> on WhatsApp, made from what you already have, and it uses up food before it goes off.</p>
+<a class="pill" href="{link}">Say Hi on WhatsApp</a>
+<p class="small">{days} days free, then {price}/month. No app to download. Cancel any time.</p>
+<p class="script" style="margin-top:28px">Smart Meals. Less Waste.</p><div class="uline"></div>
+</div>
+<div class="phone" aria-label="Example WhatsApp message from Dinner 101"><div class="chat">
+<div class="time">Today 16:30</div>
+<div class="bubble"><b>Tonight: Chicken &amp; mushroom pasta</b><p>30 min · serves 4. Uses up your mushrooms and cheese before they go off. Everything's at home.</p></div>
+<div class="btns"><span>Let's cook it</span><span>Something else</span><span>Show recipe</span></div>
+</div></div>
+</section>
+
+<div class="brush">No more "what's for dinner?" stress</div>
+
+<section class="feats">
+<div class="feat">{ICON_PANTRY}<h3>Track your kitchen</h3><p>A voice note or a photo of your till slip. We keep the list.</p></div>
+<div class="feat">{ICON_CAL}<h3>Get dinner ideas</h3><p>One idea every afternoon, at the time that suits you.</p></div>
+<div class="feat">{ICON_CLOCHE}<h3>Cook with confidence</h3><p>Step-by-step recipe, and your list updates when you've cooked.</p></div>
+</section>
+
+<section>
+<h2>How it <span>works</span></h2>
+<div class="steps">
+<div class="step"><div class="num">1</div><h3>Say Hi</h3><p>Message Dinner 101 on WhatsApp. That's the whole sign-up.</p></div>
+<div class="step"><div class="num">2</div><h3>Talk your kitchen</h3><p>Walk around and send a voice note of what you have. English or Afrikaans.</p></div>
+<div class="step"><div class="num">3</div><h3>Dinner at 16:30</h3><p>Get tonight's idea with buttons: cook it, something else, or the recipe.</p></div>
+<div class="step"><div class="num">4</div><h3>Tap "Cooked it"</h3><p>Your kitchen list updates itself. Snap your slip when you shop.</p></div>
+</div>
+</section>
+
+<section class="braai">
+<div>
+<h2 style="margin-bottom:14px">Braai for 6? <span>Just ask.</span></h2>
+<ul><li>"What's in my freezer?" and you get the list.</li>
+<li>"We're braaiing for 6 tonight, what do I need?" and you get what's at home plus a ready shopping list.</li>
+<li>"Send my dinner idea at six" and it's done.</li></ul>
+</div>
+<div class="list"><b>🛒 Shopping list: Braai for 6</b>Rump steak, 1.5 kg<br>White bread, 2 loaves<br>Tomatoes, 4<br>Cheddar, 400 g<br><span style="color:#666">Already at home: onions, butter, chutney</span></div>
+</section>
+</div>
+
+<section class="price">
+<p class="big">{days} days <span>free</span></p>
+<p style="color:#d8d8d8;font-size:18px;margin:6px 0 24px">Then {price} a month. Cancel any time by sending "cancel".</p>
+<a class="pill" href="{link}">Start on WhatsApp</a>
+<div class="qr">{qr_svg(link)}</div>
+<p class="small">Scan with your phone camera to open WhatsApp</p>
+</section>
+
+<div class="w"><footer>
+<div><a href="https://www.instagram.com/getdinner101/">Instagram @getdinner101</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
+<div>© Dinner 101 · Pips to Profit (Pty) Ltd</div>
+</footer></div>
+</body></html>"""
 
 
 def privacy() -> str:
