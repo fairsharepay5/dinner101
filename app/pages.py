@@ -48,7 +48,7 @@ def landing() -> str:
 <li><b>Get tonight's dinner</b> on WhatsApp with a photo. Tap "Let's cook it".</li>
 <li><b>See what you saved</b> every month, in Rand.</li></ol></div>
 <div class="card" style="text-align:center"><p>Scan to start on WhatsApp</p><div style="width:200px;margin:0 auto">{qr_svg(link)}</div></div>
-<p class="muted" style="margin-top:40px"><a href="/privacy">Privacy policy</a> · <a href="/terms">Terms</a></p>
+<p class="muted" style="margin-top:40px"><a href="https://www.instagram.com/getdinner101/">Instagram @getdinner101</a> · <a href="/privacy">Privacy policy</a> · <a href="/terms">Terms</a></p>
 """)
 
 
