@@ -29,6 +29,8 @@ class Action:
 class Understood:
     actions: list[Action] = field(default_factory=list)
     other: str | None = None    # message isn't about the pantry (a question, a command)
+    intent: str | None = None   # dinner | set_time | list | help (what they want besides pantry changes)
+    time: str | None = None     # "HH:MM" for set_time
 
 
 # ======================================================================
@@ -241,11 +243,17 @@ Rules:
 - storage only if the person said it (fridge|freezer|cupboard|counter), else null.
 - Ignore non-food (toiletries, cleaning, plastic bags, airtime) and slip totals.
 - price_cents = line total in cents if visible, else null.
+- intent: what the person wants besides changing their kitchen list, in any wording or language:
+  "dinner" = they want a meal idea now (what can I make/cook/eat tonight, what's for supper, wat kan ek vanaand maak, I'm hungry, give me an idea);
+  "set_time" = they want the daily dinner message at another time (send it at six, change dinner time to half past five, stuur dit om sesuur) -> also fill time as 24h HH:MM; evening hours given without am/pm are pm (six -> 18:00, half five -> 17:30);
+  "list" = they want to see what's in their kitchen; "help" = they ask how this works; else null.
+  A message can both add items and have an intent ("bought chicken, what can I make tonight?").
 Reply with JSON only."""
 
 SLIP_SCHEMA = '{"items":[{"raw":"slip line","name":"..","key":"..|null","qty":n|null,"unit":"..|null","price_cents":n|null,"category":"..|null","shelf_days":n|null}]}'
 MSG_SCHEMA = ('{"actions":[{"op":"add","name":"..","key":"..|null","qty":n|null,"unit":"..|null","storage":"..|null","category":"..|null","shelf_days":n|null},'
               '{"op":"remove","key":"..","reason":"finished|binned","qty":n|null},{"op":"set","key":"..","qty":n}],'
+              '"intent":"dinner|set_time|list|help|null","time":"HH:MM|null",'
               '"other":"the message text if it is NOT about adding/removing kitchen items, else null"}')
 
 
@@ -292,6 +300,11 @@ def ai_read_slip(image: bytes, mime: str) -> list[ParsedItem]:
 def ai_understand(text: str) -> Understood:
     data = _ask_claude([{"type": "text", "text": f"Message from the household (may be a voice-note transcript):\n\"\"\"{text}\"\"\""}], MSG_SCHEMA)
     u = Understood(other=data.get("other"))
+    if data.get("intent") in ("dinner", "set_time", "list", "help"):
+        u.intent = data["intent"]
+    if isinstance(data.get("time"), str) and re.fullmatch(r"\d{1,2}:\d{2}", data["time"]):
+        h, m = data["time"].split(":")
+        u.time = f"{int(h):02d}:{m}"
     for a in data.get("actions", []):
         op = a.get("op")
         if op == "add":

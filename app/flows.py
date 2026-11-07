@@ -171,12 +171,29 @@ def on_voice(s: Session, user: User, inb: Inbound) -> None:
 
 def on_text(s: Session, user: User, text: str, source: str = "voice") -> None:
     cmd = command_for(text)
-    if cmd:
+    if cmd and not (settings.ai_enabled and cmd in ("dinner", "time") and len(text.split()) > 6):
         run_command(s, user, cmd, text)
         return
     u = parsing.understand(text)
+    if cmd and not u.intent and not u.actions:
+        run_command(s, user, cmd, text)
+        return
     if settings.ai_enabled:
         s.add(Usage(user_id=user.id, kind="ai_parse", usd=0.004, detail="text"))
+    if u.intent:
+        if u.actions:
+            apply_actions(s, user, u.actions, source="setup" if user.stage == "setup" else source)
+            if user.stage == "setup" or (user.pending or {}).get("storage_q"):
+                return
+        if u.intent == "dinner":
+            send_dinner(s, user, force=True)
+        elif u.intent == "set_time":
+            set_dinner_time(s, user, u.time or parse_time(text))
+        elif u.intent == "list":
+            say(s, user, pantry.list_text(s, user))
+        else:
+            say(s, user, help_text())
+        return
     if not u.actions:
         if user.stage == "setup":
             say(s, user, "I didn't catch any kitchen items there. Try a voice note like: \"six eggs, mince, a bag of potatoes, pasta, cheese…\"")
@@ -286,10 +303,13 @@ def command_for(text: str) -> str | None:
     t = text.strip().lower()
     if re.fullmatch(r"(see )?(my )?(list|lys|kitchen|pantry|inventory)\??|what do i have\??|wat het ek\??", t):
         return "list"
-    if re.fullmatch(r"(dinner|dinner\?|what'?s for dinner\??|wat eet ons( vanaand)?\??|dinner idea( now)?|idea|suggest.*)", t):
-        return "dinner"
-    if re.search(r"\b(send|dinner|stuur)\b.*\b(at|om)\s*\d{1,2}([:h.]\d{2})?", t):
+    if parse_time(t) and re.search(r"\b(send|stuur|change|move|verander|dinner|supper|aandete|time|tyd|message|boodskap|remind)\b", t):
         return "time"
+    if re.fullmatch(r"(dinner|supper|aandete|idea|idee|suggest.*)\W*", t) or re.search(
+            r"what('?s| is| can| should| do)\b.*\b(make|cook|eat|dinner|supper|tonight)\b|"
+            r"\b(dinner|supper|meal) (idea|ideas|suggestion)\b|\b(i'?m|we'?re) hungry\b|"
+            r"\bwat\b.*\b(maak|kook|eet)\b|\baandete\b.*\?|\bhonger\b", t):
+        return "dinner"
     if re.fullmatch(r"(help|hulp|\?|menu)", t):
         return "help"
     if re.fullmatch(r"(cancel|stop|unsubscribe|kanselleer)( (my )?(subscription|sub))?", t):
@@ -303,21 +323,57 @@ def command_for(text: str) -> str | None:
     return None
 
 
+_NUM = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+        "ten": 10, "een": 1, "twee": 2, "drie": 3, "vier": 4, "vyf": 5, "ses": 6, "sewe": 7, "agt": 8, "nege": 9, "tien": 10}
+
+
+def parse_time(t: str) -> str | None:
+    """'6 o'clock', 'half past five', 'half six', '17:30', '6pm', 'sesuur', 'half ses' -> 'HH:MM' (evening assumed)."""
+    t = t.lower()
+    words = "|".join(_NUM)
+    h = mi = None
+    m = re.search(r"\b(\d{1,2})[:h.](\d{2})\b", t)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2))
+    if h is None:
+        m = re.search(rf"\bhalf (?:past )?(\d{{1,2}}|{words})\b", t)
+        if m:
+            n = int(m.group(1)) if m.group(1).isdigit() else _NUM[m.group(1)]
+            # English "half past six" = 6:30; English "half six" = 6:30; Afrikaans "half ses" = 5:30
+            afr = m.group(1) in ("een", "twee", "drie", "vier", "vyf", "ses", "sewe", "agt", "nege", "tien")
+            h, mi = (n - 1, 30) if afr and "past" not in m.group(0) else (n, 30)
+    if h is None:
+        m = re.search(rf"\bquarter (past|to) (\d{{1,2}}|{words})\b", t)
+        if m:
+            n = int(m.group(2)) if m.group(2).isdigit() else _NUM[m.group(2)]
+            h, mi = (n, 15) if m.group(1) == "past" else (n - 1, 45)
+    if h is None:
+        m = re.search(rf"\b(\d{{1,2}}|{words})\s*(?:o'?clock|uur|pm|p\.m\.)|\b(\d{{1,2}}|{words})uur\b|\b(?:at|om|to|na)\s+(\d{{1,2}}|{words})\b", t)
+        if m:
+            g = m.group(1) or m.group(2) or m.group(3)
+            h, mi = (int(g) if g.isdigit() else _NUM[g]), 0
+    if h is None or not (0 <= h <= 23 and 0 <= mi <= 59):
+        return None
+    if h < 12 and h <= 10:
+        h += 12          # dinner time: "6" means 18:00
+    return f"{h:02d}:{mi:02d}"
+
+
+def set_dinner_time(s: Session, user: User, hhmm: str | None) -> None:
+    if not hhmm:
+        say(s, user, "What time should I send your dinner idea? E.g. \"send it at 17:30\".")
+        return
+    user.dinner_time = hhmm
+    say(s, user, f"👍 Done. I'll send your dinner idea at {hhmm} from now on.")
+
+
 def run_command(s: Session, user: User, cmd: str, text: str) -> None:
     if cmd == "list":
         say(s, user, pantry.list_text(s, user))
     elif cmd == "dinner":
         send_dinner(s, user, force=True)
     elif cmd == "time":
-        m = re.search(r"(\d{1,2})(?:[:h.](\d{2}))?\s*(pm)?", text.lower().split(" at ")[-1].split(" om ")[-1])
-        if m:
-            h, mi = int(m.group(1)), int(m.group(2) or 0)
-            if m.group(3) and h < 12:
-                h += 12
-            if h < 12:
-                h += 12 if h <= 7 else 0
-            user.dinner_time = f"{h:02d}:{mi:02d}"
-            say(s, user, f"👍 I'll send your dinner idea at {user.dinner_time} from now on.")
+        set_dinner_time(s, user, parse_time(text.lower()))
     elif cmd == "help":
         say(s, user, help_text())
     elif cmd == "cancel":

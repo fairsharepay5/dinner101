@@ -187,3 +187,19 @@ def test_delete_my_data():
     with session_scope() as s:
         assert s.scalar(select(User).where(User.phone == PHONE)) is None
         assert s.scalar(select(PantryItem)) is None
+
+
+def test_plain_language_dinner_and_time():
+    out = onboard()
+    for _ in range(4):
+        b = buttons_of(out)
+        if not b:
+            break
+        out = tap(b[0][0])
+    out = send_text("Okay, what can I make tonight?")
+    assert any(m.get("buttons") or "tonight" in m.get("body", "").lower() for m in out)
+    assert "Here's what you can send me" not in out[0].get("body", "")
+    out = send_text("change the dinner time to 6 o'clock")
+    assert "18:00" in out[0]["body"]
+    with session_scope() as s:
+        assert s.scalar(select(User).where(User.phone == PHONE)).dinner_time == "18:00"

@@ -142,3 +142,15 @@ def test_only_amounts_the_user_said_are_shown():
         assert chicken.qty == 600
         text = pantry.list_text(s, u)
         assert "Chicken fillets ×4" in text and "400 g" not in text and "250 g" not in text
+
+
+def test_natural_dinner_and_time_requests():
+    from app.flows import command_for, parse_time
+    for t in ["Okay, what can I make tonight?", "wat kan ek vanaand maak", "what's for supper", "I'm hungry", "dinner"]:
+        assert command_for(t) == "dinner", t
+    assert command_for("change the dinner time to 6 o'clock") == "time"
+    assert parse_time("change the dinner time to 6 o'clock") == "18:00"
+    assert parse_time("send dinner at half past five") == "17:30"
+    assert parse_time("stuur dit om half ses") == "17:30"
+    assert parse_time("send it at 17:30") == "17:30"
+    assert command_for("3 onions and some bread") is None
