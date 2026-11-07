@@ -418,3 +418,76 @@ def ai_plan(request: str, kitchen_lines: list[str], today: str) -> dict:
     if not m:
         raise ValueError(f"No JSON in plan reply: {text[:200]}")
     return json.loads(m.group(0))
+
+
+# ======================================================================
+# Kitchen assistant: sees the kitchen list + recent chat and decides
+# ======================================================================
+
+ASSISTANT_SYSTEM = """You are Dinner 101, a friendly South African kitchen helper that people chat with on WhatsApp
+(often via voice-note transcripts, in English or Afrikaans; mirror their language).
+You keep track of the household's kitchen (fridge, freezer, cupboard, counter) and help with anything about
+food: cooking how-tos (how to peel an onion, fry tomatoes, cook rice), techniques, which pan or pot to use,
+flavour and spice ideas, substitutes, storage and food safety, leftovers, shopping and budgeting for food,
+meal ideas, braais and occasions.
+
+Scope: ONLY food, cooking, the kitchen and grocery shopping. If asked about anything else (cars, sport,
+politics, homework, tech support...), politely say you can only help with food and the kitchen, in one short line.
+
+You get the household's current kitchen list and the last few chat messages. Think about what the person
+actually means and act on it like a sensible person would:
+- Things they bought, have, or found -> add. Things eaten, used up, thrown away or gone off -> remove the
+  matching item from the kitchen list (use its key exactly as listed). "Threw out everything in the fridge" ->
+  clear fridge. "Moved the mince to the freezer" -> move.
+- Only real food/drink is an item. Never add filler words, names or greetings.
+- Only record amounts they actually said; never invent quantities. Counted pieces stay counts (unit "count").
+- Use known catalogue keys for new items when they match: {catalogue}
+- Corrections ("no, there's still half the cheese") -> set.
+- If they want a dinner idea for tonight -> intent "dinner" (the app sends its own idea with buttons; don't write one).
+- If they want the daily message at another time -> intent "set_time" with time HH:MM (evening by default).
+- If they're planning a meal/occasion and ask what they need -> intent "plan".
+- If they ask what's in the kitchen/fridge/freezer -> intent "list" (with place if named).
+- Otherwise answer in "reply": warm, practical, short (WhatsApp style, *bold* allowed, 1-6 short lines or a
+  short numbered list for how-tos). When you changed the list, briefly confirm what you did in the reply.
+- If something is unclear and matters (e.g. which item they mean), ask one short question in the reply.
+Reply with JSON only."""
+
+ASSISTANT_SCHEMA = ('{"reply":"text for the user, or empty if an intent handles it",'
+                    '"actions":[{"op":"add","name":"..","key":"..|null","qty":n|null,"unit":"..|null","storage":"..|null","category":"..|null","shelf_days":n|null},'
+                    '{"op":"remove","key":"existing key","reason":"finished|binned","qty":n|null},'
+                    '{"op":"set","key":"existing key","qty":n},'
+                    '{"op":"clear","place":"fridge|freezer|cupboard|counter|all","reason":"finished|binned"},'
+                    '{"op":"move","key":"existing key","storage":"fridge|freezer|cupboard|counter"}],'
+                    '"intent":"dinner|set_time|plan|list|null","time":"HH:MM|null","place":"fridge|freezer|cupboard|counter|null"}')
+
+
+def ai_assistant(text: str, kitchen_lines: list[str], history: list, today: str) -> dict:
+    from .config import settings
+    hist = "\n".join(f"{'Them' if r == 'u' else 'You'}: {t}" for r, t in history[-8:]) or "(none)"
+    content = (f"Today: {today}\n\nKitchen list (key | name | amount | where):\n" + ("\n".join(kitchen_lines) or "(empty)")
+               + f"\n\nRecent chat:\n{hist}\n\nNew message (may be a voice-note transcript):\n\"\"\"{text}\"\"\""
+               + f"\n\nReturn JSON exactly in this shape: {ASSISTANT_SCHEMA}")
+    resp = _client().messages.create(model=settings.parse_model, max_tokens=1500,
+                                     system=ASSISTANT_SYSTEM.replace("{catalogue}", _catalogue_hint()),
+                                     messages=[{"role": "user", "content": content}])
+    out = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+    m = re.search(r"\{.*\}", out, re.S)
+    if not m:
+        raise ValueError(f"No JSON in assistant reply: {out[:200]}")
+    return json.loads(m.group(0))
+
+
+def assistant_actions(data: dict) -> list:
+    acts = []
+    for a in data.get("actions") or []:
+        op = a.get("op")
+        if op == "add":
+            acts.append(Action(op="add", item=_item_from(a)))
+        elif op == "clear" and a.get("place") in ("fridge", "freezer", "cupboard", "counter", "all"):
+            acts.append(Action(op="clear", place=a["place"], reason=a.get("reason") or "binned"))
+        elif op == "move" and a.get("key") and a.get("storage") in ("fridge", "freezer", "cupboard", "counter"):
+            acts.append(Action(op="move", key=a["key"], place=a["storage"]))
+        elif op in ("remove", "set") and a.get("key"):
+            key = a["key"] if a["key"] in catalogue.CATALOGUE or a["key"].startswith("x_") else (catalogue.match(a["key"]) or a["key"])
+            acts.append(Action(op=op, key=key, reason=a.get("reason") or "finished", qty=a.get("qty")))
+    return acts

@@ -303,3 +303,39 @@ def test_threw_out_everything_in_fridge_and_cupboard():
         assert "fridge" not in left and "cupboard" not in left
     out = send_text("okay, 2 onions")
     assert "Okay" not in out[0]["body"]
+
+
+def test_assistant_removes_items_and_answers_cooking_questions(monkeypatch):
+    from app import parsing
+    from app.config import settings
+    out = onboard()
+    for _ in range(3):
+        b = buttons_of(out)
+        if not b:
+            break
+        out = tap(b[0][0])
+    monkeypatch.setattr(type(settings), "ai_enabled", property(lambda self: True))
+    seen = {}
+
+    def fake(text, lines, history, today):
+        seen["lines"] = lines
+        if "bin" in text:
+            return {"reply": "🗑️ Done, took the tomatoes and eggs off your list.",
+                    "actions": [{"op": "remove", "key": "tomato", "reason": "binned"},
+                                {"op": "remove", "key": "eggs", "reason": "binned"}]}
+        if "onion" in text:
+            return {"reply": "1. Cut off the top\n2. Halve it\n3. Peel the skin back", "actions": []}
+        return {"reply": "Sorry, I can only help with food and the kitchen.", "actions": []}
+
+    monkeypatch.setattr(parsing, "ai_assistant", fake)
+    out = send_text("The tomatoes I threw in the bin, and the eggs too")
+    assert "took the tomatoes" in out[0]["body"]
+    assert any(l.startswith("tomato |") for l in seen["lines"])
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        keys = {it.key for it in pantry.active_items(s, user)}
+        assert "tomato" not in keys and "eggs" not in keys
+    out = send_text("How do I peel an onion?")
+    assert "Halve it" in out[0]["body"]
+    out = send_text("How do I change my car's oil?")
+    assert "only help with food" in out[0]["body"]

@@ -181,6 +181,8 @@ def on_text(s: Session, user: User, text: str, source: str = "voice") -> None:
             return
         _pop_pending(user, "plan")    # a voice note of what was used: handled as normal changes below
     cmd = command_for(text)
+    if settings.ai_enabled and cmd not in ("cancel", "pay", "delete") and assistant_turn(s, user, text, source):
+        return
     if cmd and not (settings.ai_enabled and cmd in ("dinner", "time") and len(text.split()) > 6):
         run_command(s, user, cmd, text)
         return
@@ -215,13 +217,63 @@ def on_text(s: Session, user: User, text: str, source: str = "voice") -> None:
     apply_actions(s, user, u.actions, source="setup" if user.stage == "setup" else source)
 
 
-def apply_actions(s: Session, user: User, actions: list, source: str) -> None:
+def _remember_chat(user: User, role: str, text: str) -> None:
+    hist = list((user.pending or {}).get("chat", []))[-9:]
+    hist.append([role, (text or "")[:400]])
+    _set_pending(user, chat=hist)
+
+
+def assistant_turn(s: Session, user: User, text: str, source: str) -> bool:
+    """Let the kitchen assistant read the message with the full kitchen list and recent chat. False = fall back."""
+    try:
+        data = parsing.ai_assistant(text, _kitchen_lines(s, user), (user.pending or {}).get("chat", []),
+                                    clock.now().strftime("%A %Y-%m-%d %H:%M"))
+    except Exception:  # noqa: BLE001
+        log.exception("assistant failed; using the simple parser")
+        return False
+    s.add(Usage(user_id=user.id, kind="ai_assistant", usd=0.01, detail=text[:200]))
+    _remember_chat(user, "u", text)
+    reply = (data.get("reply") or "").strip()
+    actions = parsing.assistant_actions(data)
+    intent = data.get("intent") if data.get("intent") in ("dinner", "set_time", "plan", "list") else None
+    if actions:
+        apply_actions(s, user, actions, source="setup" if user.stage == "setup" else source, note=reply)
+        if reply:
+            _remember_chat(user, "b", reply)
+        if user.stage == "setup" or (user.pending or {}).get("storage_q"):
+            return True
+    elif reply:
+        say(s, user, reply)
+        _remember_chat(user, "b", reply)
+    if intent == "dinner":
+        send_dinner(s, user, force=True)
+    elif intent == "set_time":
+        hhmm = data.get("time") if isinstance(data.get("time"), str) and re.fullmatch(r"\d{1,2}:\d{2}", data["time"]) else parse_time(text)
+        if hhmm and len(hhmm) == 4:
+            hhmm = "0" + hhmm
+        set_dinner_time(s, user, hhmm)
+    elif intent == "plan":
+        plan_occasion(s, user, text)
+    elif intent == "list":
+        place = data.get("place") if data.get("place") in ("fridge", "freezer", "cupboard", "counter") else None
+        say(s, user, pantry.list_text(s, user, place))
+    elif not actions and not reply:
+        say(s, user, help_text())
+    return True
+
+
+def apply_actions(s: Session, user: User, actions: list, source: str, note: str = "") -> None:
     to_add = [a.item for a in actions if a.op == "add" and a.item]
     removed, changed = [], []
     cleared = []
     to_add = [it for it in to_add if not (not it.key and (it.name or "").strip().lower() in parsing.FILLER_ITEMS)]
     for a in actions:
-        if a.op == "clear" and a.place:
+        if a.op == "move" and a.key and a.place:
+            for it in pantry.active_items(s, user):
+                if it.key == a.key:
+                    pantry.set_storage(s, user, it, a.place)
+                    changed.append(a.key)
+        elif a.op == "clear" and a.place:
             n = pantry.clear_place(s, user, a.place, a.reason or "binned")
             cleared.append((a.place, n))
         elif a.op == "remove" and a.key:
@@ -245,6 +297,8 @@ def apply_actions(s: Session, user: User, actions: list, source: str) -> None:
         parts.append(f"🗑️ Took off: {_names(removed)}")
     if changed:
         parts.append(f"✏️ Updated: {_names(changed)}")
+    if note:
+        parts = [note]          # the assistant already explained what it did, in its own words
     if not parts:
         parts.append("👍 Noted.")
 
