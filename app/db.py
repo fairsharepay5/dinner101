@@ -28,6 +28,8 @@ def _add_missing_columns() -> None:
         return
     have = {c["name"] for c in insp.get_columns("pantry_items")}
     with engine.begin() as conn:
+        if "suggestions" in insp.get_table_names() and "recipe_json" not in {c["name"] for c in insp.get_columns("suggestions")}:
+            conn.execute(text("ALTER TABLE suggestions ADD COLUMN recipe_json TEXT"))
         # clean up filler words that were saved as food ("Okay ×1")
         conn.execute(text("UPDATE pantry_items SET active = 0, removed_reason = 'replaced' "
                           "WHERE active = 1 AND lower(name) IN ('okay','ok','oky','um','uh','yes','no','ja','nee','hi','hello','thanks','so','and','please')"))

@@ -73,6 +73,7 @@ class Suggestion(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     recipe_id: Mapped[str] = mapped_column(String(60))
+    recipe_json: Mapped[Optional[str]] = mapped_column(Text)   # dish the AI made up from the kitchen ("ai:..." ids)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=clock.now)
     # sent|accepted|rejected|cooked|not_cooked|other_meal|skipped
     status: Mapped[str] = mapped_column(String(20), default="sent")

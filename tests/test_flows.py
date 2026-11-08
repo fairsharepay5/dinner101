@@ -381,3 +381,24 @@ def test_we_are_only_two_rescales_same_dish(monkeypatch):
     with session_scope() as s:
         user = s.scalar(select(User).where(User.phone == PHONE))
         assert user.pending.get("people") == 2
+
+
+def test_low_kitchen_gets_an_ai_dish_not_a_warning(monkeypatch):
+    from app import parsing
+    from app.config import settings
+    at(10)
+    send_text("Hi Dinner 101")
+    send_text("2 onions and some rice")
+    for b, _ in buttons_of(wa.sim_outbox.take(PHONE)):
+        tap(b)
+    monkeypatch.setattr(type(settings), "ai_enabled", property(lambda self: True))
+    monkeypatch.setattr(parsing, "ai_dish", lambda lines, people, avoid, wd: {
+        "id": "ai:onion_rice", "name": "Golden onion rice", "minutes": 25, "serves": 2, "blurb": "Sweet fried onions over rice.",
+        "steps": ["Fry onions", "Cook rice", "Mix"], "ingredients": [{"key": "onion", "qty": 2}, {"key": "rice", "qty": 200}]})
+    out = send_text("dinner")
+    body = " ".join(m.get("body") or "" for m in out)
+    assert "Golden onion rice" in body and "low" not in body.lower()
+    assert [t for _, t in buttons_of(out)] == ["Let's cook it", "Something else", "Show recipe"]
+    sg_id = buttons_of(out)[2][0]
+    out = tap(sg_id)
+    assert "Fry onions" in out[0]["body"]

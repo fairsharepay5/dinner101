@@ -435,8 +435,10 @@ say kindly in one line that you can only help with food and the kitchen.
 
 Within that boundary, use your own judgement. You can:
 - Answer anything food-related: techniques, how-tos, which pan/pot, flavours, substitutes, timings, leftovers.
-- Suggest dinners yourself, from what's in their kitchen (or tell them what's missing). You may write a short recipe
-  yourself, scaled to their household. Or, for the standard nightly idea with buttons, use intent "dinner".
+- Dinner ideas: whenever they want an idea, another option, something different, or "what can I make", use intent
+  "dinner" and leave reply empty. The app sends exactly ONE dish with buttons (cook it / something else / recipe).
+  Never list several dishes or "other ideas" yourself, and never tell them their kitchen is low or empty.
+  If they ask for the recipe or steps of the dish being discussed, you may write it (one dish, scaled to their household).
 - Keep their kitchen list right using actions. Be sensible: "the tomatoes and bread I threw in the bin" = remove those;
   "in the freezer I have X, Y" = add X and Y with storage freezer; repeats in one message add up (8 steaks + another
   steak = 9); "we cooked the mince curry" = remove what that used; "moved the mince to the fridge" = move.
@@ -487,3 +489,32 @@ def assistant_actions(data: dict) -> list:
             key = a["key"] if a["key"] in catalogue.CATALOGUE or a["key"].startswith("x_") else (catalogue.match(a["key"]) or a["key"])
             acts.append(Action(op=op, key=key, reason=a.get("reason") or "finished", qty=a.get("qty")))
     return acts
+
+
+DISH_SYSTEM = """You create ONE realistic, tasty home dinner for a South African household using what is in their kitchen.
+Prefer ingredients that need using up. Assume basics (salt, oil, spices, flour, sugar, stock cubes) are there.
+Only use other ingredients from their kitchen list. Keep it practical for a weeknight. Don't repeat dishes listed as
+already suggested today. Use the exact keys from the list for ingredients, with amounts in that key's unit.
+Reply with JSON only."""
+
+
+def ai_dish(kitchen_lines: list[str], people, avoid: list[str], weekday: str) -> dict | None:
+    from .config import settings
+    people = int(people or 4)
+    content = (f"Today is {weekday}. Cooking for {people}.\nAlready suggested today (pick something different): "
+               + (", ".join(avoid) or "none") + "\n\nKitchen list (key | name | amount | where):\n" + "\n".join(kitchen_lines)
+               + '\n\nReturn JSON: {"name":"dish name","minutes":n,"blurb":"one short line on why it works tonight",'
+               '"ingredients":[{"key":"kitchen key","qty":n}],"steps":["short step", "..."]}')
+    resp = _client().messages.create(model=settings.assistant_model, max_tokens=1500, system=DISH_SYSTEM,
+                                     messages=[{"role": "user", "content": content}])
+    out = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+    m = re.search(r"\{.*\}", out, re.S)
+    if not m:
+        return None
+    d = json.loads(m.group(0))
+    if not d.get("name") or not d.get("ingredients"):
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "_", d["name"].lower()).strip("_")[:40]
+    return {"id": f"ai:{slug}", "name": d["name"], "minutes": int(d.get("minutes") or 30), "serves": people,
+            "blurb": d.get("blurb") or "", "steps": d.get("steps") or [],
+            "ingredients": [{"key": i["key"], "qty": float(i.get("qty") or 1)} for i in d["ingredients"] if i.get("key")]}

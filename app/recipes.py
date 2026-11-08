@@ -133,8 +133,16 @@ def needs(ev: Eval) -> list[tuple[str, float]]:
     return list(ev.used)
 
 
-def eval_for(s: Session, user: User, recipe_id: str) -> Eval:
-    r = RECIPES[recipe_id]
+def recipe_of(sg) -> dict:
+    """Built-in recipe, or the dish the AI made for this suggestion."""
+    if getattr(sg, "recipe_json", None):
+        import json as _json
+        return _json.loads(sg.recipe_json)
+    return RECIPES[sg.recipe_id]
+
+
+def eval_for(s: Session, user: User, recipe_id, sg=None) -> Eval:
+    r = recipe_of(sg) if sg is not None else RECIPES[recipe_id]
     return evaluate(r, pantry.stock(s, user), people_factor(user, r))
 
 

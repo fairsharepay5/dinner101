@@ -3,6 +3,7 @@
 The user sees only four things: send a slip/voice note, tonight's dinner,
 one-tap replies, and a monthly savings message. Everything else is background.
 """
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -264,6 +265,9 @@ def assistant_turn(s: Session, user: User, text: str, source: str) -> bool:
                 say(s, user, f"👍 Got it, I'll plan dinners for {people} from now on.")
         return True
     if intent == "dinner":
+        for sg in today_suggestions(s, user):
+            if sg.status == "sent":
+                sg.status = "rejected"
         send_dinner(s, user, force=True)
     elif intent == "set_time":
         hhmm = data.get("time") if isinstance(data.get("time"), str) and re.fullmatch(r"\d{1,2}:\d{2}", data["time"]) else parse_time(text)
@@ -652,37 +656,43 @@ def send_dinner(s: Session, user: User, force: bool = False, exclude: set | None
         if pending:
             pending.checkin_sent_at = clock.now()
             _set_pending(user, dinner_after_checkin=True)
-            r = recipes.RECIPES[pending.recipe_id]
+            r = recipes.recipe_of(pending)
             body = f"Before tonight's idea: did you cook the {r['name'].lower()} last time?"
             btns = [(f"cooked:{pending.id}", "Cooked it"), (f"notcooked:{pending.id}", "Didn't cook")]
             send(s, user, wa.template(settings.tpl_checkin, [r["name"].lower()], wa.buttons(body, btns), button_ids=[b[0] for b in btns]))
             return None
-    rejected = {sg.recipe_id for sg in today_suggestions(s, user) if sg.status == "rejected"}
-    best, near = recipes.pick(s, user, exclude=(exclude or set()) | rejected)
-    if not best:
-        if near:
-            item = near.missing[0]
-            msg = (f"Your kitchen is running a bit low tonight. Grab {_names([item])}{recipes.price_hint(item)} "
-                   f"and you can make *{near.recipe['name']}*.")
-        else:
-            msg = "I can't find a full dinner in your kitchen right now. Send me your next slip (or a voice note of what you've got) and I'll sort out ideas."
-        send(s, user, wa.template(settings.tpl_notice, [msg], wa.text(msg)))
-        return None
-
-    sg = Suggestion(user_id=user.id, recipe_id=best.recipe["id"], status="sent")
+    today = today_suggestions(s, user)
+    rejected = {sg.recipe_id for sg in today if sg.status == "rejected"}
+    best, _near = recipes.pick(s, user, exclude=(exclude or set()) | rejected)
+    if best:
+        r, uses_soon = best.recipe, best.use_soon
+        sg = Suggestion(user_id=user.id, recipe_id=r["id"], status="sent")
+    else:
+        # Nothing from the built-in book fits: let the AI make one real dish from what they have.
+        dish = None
+        if settings.ai_enabled:
+            try:
+                dish = parsing.ai_dish(_kitchen_lines(s, user), (user.pending or {}).get("people"),
+                                       [recipes.recipe_of(x)["name"] for x in today], clock.now().strftime("%A"))
+            except Exception:  # noqa: BLE001
+                log.exception("AI dish failed")
+        if not dish:
+            msg = "What do you feel like tonight? Tell me (e.g. \"something with chicken\") and I'll find a dish from your kitchen."
+            send(s, user, wa.template(settings.tpl_notice, [msg], wa.text(msg)))
+            return None
+        s.add(Usage(user_id=user.id, kind="ai_dish", usd=0.02, detail=dish["name"][:200]))
+        r, uses_soon = dish, []
+        sg = Suggestion(user_id=user.id, recipe_id=dish["id"], status="sent", recipe_json=json.dumps(dish))
     s.add(sg)
     s.flush()
-    r = best.recipe
-    if best.use_soon:
-        uses = f"Uses up your {_names(best.use_soon)} before they go off. Everything's at home."
+    if uses_soon:
+        uses = f"Uses up your {_names(uses_soon)} before they go off. Everything's at home."
     else:
-        uses = "Everything's at home."
+        uses = r.get("blurb") or "Everything's at home."
     serves = (user.pending or {}).get("people") or r["serves"]
     body = f"*Tonight: {r['name']}*\n{r['minutes']} min · serves {serves}\n\n{uses}"
-    if near:
-        body += f"\n\n💡 One item short of *{near.recipe['name']}*: {_names(near.missing)}{recipes.price_hint(near.missing[0])}."
     btns = [(f"cook:{sg.id}", "Let's cook it"), (f"other:{sg.id}", "Something else"), (f"recipe:{sg.id}", "Show recipe")]
-    image = photos.url_for(r["id"])
+    image = photos.url_for(r["id"]) if r["id"] in recipes.RECIPES else None
     fallback = wa.buttons(body, btns, image=image)
     tpl_image = image or f"{settings.public_base_url.rstrip('/')}/brand/logo.png"
     send(s, user, wa.template(settings.tpl_dinner, [r["name"], str(r["minutes"]), uses], fallback, image=tpl_image,
@@ -691,8 +701,8 @@ def send_dinner(s: Session, user: User, force: bool = False, exclude: set | None
 
 
 def recipe_text(s: Session, user: User, sg: Suggestion) -> str:
-    r = recipes.RECIPES[sg.recipe_id]
-    ev = recipes.eval_for(s, user, sg.recipe_id)
+    r = recipes.recipe_of(sg)
+    ev = recipes.eval_for(s, user, sg.recipe_id, sg)
     uses = ", ".join(
         pantry.amount_phrase(catalogue.get(k).name if catalogue.get(k) else k, q, catalogue.get(k).unit if catalogue.get(k) else "count")
         for k, q in ev.used)
@@ -722,7 +732,7 @@ def _learn_dinner_time(user: User) -> None:
 
 def send_checkin(s: Session, user: User, sg: Suggestion) -> None:
     sg.checkin_sent_at = clock.now()
-    r = recipes.RECIPES[sg.recipe_id]
+    r = recipes.recipe_of(sg)
     btns = [(f"cooked:{sg.id}", "Cooked it"), (f"notcooked:{sg.id}", "Didn't cook")]
     send(s, user, wa.template(settings.tpl_checkin, [r["name"].lower()],
                               wa.buttons(f"How did the {r['name'].lower()} go?", btns), button_ids=[b[0] for b in btns]))
@@ -777,7 +787,7 @@ def on_button(s: Session, user: User, bid: str) -> None:
     elif sg is None:
         say(s, user, "That button has expired. Send \"dinner\" for a fresh idea.")
     elif action == "cook":
-        ev = recipes.eval_for(s, user, sg.recipe_id)
+        ev = recipes.eval_for(s, user, sg.recipe_id, sg)
         if ev.unsure_mains:
             key = ev.unsure_mains[0]
             send(s, user, wa.buttons(f"Quick check: still got the {_names([key])}?",
@@ -788,7 +798,7 @@ def on_button(s: Session, user: User, bid: str) -> None:
         key, yes = parts[2], parts[3] == "y"
         pantry.confirm_present(s, user, key, yes)
         if yes:
-            ev = recipes.eval_for(s, user, sg.recipe_id)
+            ev = recipes.eval_for(s, user, sg.recipe_id, sg)
             if ev.unsure_mains:
                 k = ev.unsure_mains[0]
                 send(s, user, wa.buttons(f"And the {_names([k])}?", [(f"have:{sg.id}:{k}:y", "Yes"), (f"have:{sg.id}:{k}:n", "No")]))
@@ -814,7 +824,7 @@ def on_button(s: Session, user: User, bid: str) -> None:
         if sg.status in ("cooked",):
             say(s, user, "Already updated 👍")
             return
-        ev = recipes.eval_for(s, user, sg.recipe_id)
+        ev = recipes.eval_for(s, user, sg.recipe_id, sg)
         rescued = pantry.deduct(s, user, recipes.needs(ev))
         sg.status, sg.resolved_at = "cooked", clock.now()
         _like(s, user, sg.recipe_id, +1)
@@ -836,7 +846,7 @@ def on_button(s: Session, user: User, bid: str) -> None:
     elif action == "left" and len(parts) == 3:
         sg.leftovers = parts[2] == "y"
         if sg.leftovers:
-            r = recipes.RECIPES[sg.recipe_id]
+            r = recipes.recipe_of(sg)
             s.add(PantryItem(user_id=user.id, key=f"x_leftovers_{sg.id}", name=f"Leftover {r['name'].lower()}", qty=1,
                              unit="portion", category="perishable", storage="fridge", source="leftovers",
                              added_at=clock.now(), expires_at=clock.now() + timedelta(days=3), confidence=1.0, active=True))
