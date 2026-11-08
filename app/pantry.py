@@ -139,7 +139,7 @@ def add_items(s: Session, user: User, parsed: list[ParsedItem], source: str) -> 
     for p in parsed:
         key = p.key or catalogue.match(p.name) or _unknown_key(p.name)
         ing = catalogue.get(key)
-        category = ing.category if ing else (p.category or "long_life")
+        category = ing.category if ing else (p.category or "perishable")   # unknown food can go off
         unit = ing.unit if ing else (p.unit or "count")
         qty_known = bool(p.qty)
         qty = p.qty if p.qty else (ing.default_qty if ing else 1)
