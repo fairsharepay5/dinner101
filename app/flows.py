@@ -682,7 +682,10 @@ def send_dinner(s: Session, user: User, force: bool = False, exclude: set | None
             log.exception("AI dish failed; using the recipe book")
     if dish:
         s.add(Usage(user_id=user.id, kind="ai_dish", usd=0.02, detail=dish["name"][:200]))
-        r, uses_soon = dish, []
+        stock = pantry.stock(s, user)
+        uses_soon = [i["key"] for i in dish["ingredients"]
+                     if stock.get(i["key"], {}).get("status") == "use_soon"]
+        r = dish
         sg = Suggestion(user_id=user.id, recipe_id=dish["id"], status="sent", recipe_json=json.dumps(dish))
     else:
         best, _near = recipes.pick(s, user, exclude=(exclude or set()) | rejected)
@@ -694,10 +697,12 @@ def send_dinner(s: Session, user: User, force: bool = False, exclude: set | None
         sg = Suggestion(user_id=user.id, recipe_id=r["id"], status="sent")
     s.add(sg)
     s.flush()
+    blurb = r.get("blurb") or "Everything's at home."
     if uses_soon:
-        uses = f"Uses up your {_names(uses_soon)} before they go off. Everything's at home."
+        # Fixed, always-the-same line so people see the app is saving their food from waste.
+        uses = f"{blurb}\n\n♻️ *Saving your {_names(uses_soon)} before {'they expire' if len(uses_soon) > 1 or _names(uses_soon).endswith('s') else 'it expires'}.*"
     else:
-        uses = r.get("blurb") or "Everything's at home."
+        uses = blurb
     serves = (user.pending or {}).get("people") or r["serves"]
     body = f"*Tonight: {r['name']}*\n{r['minutes']} min · serves {serves}\n\n{uses}"
     btns = [(f"cook:{sg.id}", "Let's cook it"), (f"other:{sg.id}", "Something else"), (f"recipe:{sg.id}", "Show recipe")]

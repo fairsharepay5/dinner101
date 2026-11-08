@@ -402,3 +402,26 @@ def test_low_kitchen_gets_an_ai_dish_not_a_warning(monkeypatch):
     sg_id = buttons_of(out)[2][0]
     out = tap(sg_id)
     assert "Fry onions" in out[0]["body"]
+
+
+def test_dinner_names_food_it_saves(monkeypatch):
+    from app import parsing
+    from app.config import settings
+    out = onboard()
+    for _ in range(3):
+        b = buttons_of(out)
+        if not b:
+            break
+        out = tap(b[0][0])
+    clock.advance(days=1)          # let things age so something is "use soon"
+    with session_scope() as s:
+        user = s.scalar(select(User).where(User.phone == PHONE))
+        soon = [k for k, v in pantry.stock(s, user).items() if v["status"] == "use_soon"]
+    assert soon
+    monkeypatch.setattr(type(settings), "ai_enabled", property(lambda self: True))
+    monkeypatch.setattr(parsing, "ai_dish", lambda *a: {
+        "id": "ai:x", "name": "Test dish", "minutes": 20, "serves": 2, "blurb": "Quick and easy.", "steps": ["Cook"],
+        "ingredients": [{"key": soon[0], "qty": 1}]})
+    out = send_text("dinner")
+    body = " ".join(m.get("body") or "" for m in out)
+    assert "♻️" in body and "Saving your" in body
