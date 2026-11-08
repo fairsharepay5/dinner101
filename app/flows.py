@@ -663,26 +663,29 @@ def send_dinner(s: Session, user: User, force: bool = False, exclude: set | None
             return None
     today = today_suggestions(s, user)
     rejected = {sg.recipe_id for sg in today if sg.status == "rejected"}
-    best, _near = recipes.pick(s, user, exclude=(exclude or set()) | rejected)
-    if best:
-        r, uses_soon = best.recipe, best.use_soon
-        sg = Suggestion(user_id=user.id, recipe_id=r["id"], status="sent")
-    else:
-        # Nothing from the built-in book fits: let the AI make one real dish from what they have.
-        dish = None
-        if settings.ai_enabled:
-            try:
-                dish = parsing.ai_dish(_kitchen_lines(s, user), (user.pending or {}).get("people"),
-                                       [recipes.recipe_of(x)["name"] for x in today], clock.now().strftime("%A"))
-            except Exception:  # noqa: BLE001
-                log.exception("AI dish failed")
-        if not dish:
-            msg = "What do you feel like tonight? Tell me (e.g. \"something with chicken\") and I'll find a dish from your kitchen."
-            send(s, user, wa.template(settings.tpl_notice, [msg], wa.text(msg)))
-            return None
+    dish = None
+    if settings.ai_enabled:
+        # Endless variety: the AI builds tonight's dish from what's actually in the kitchen,
+        # avoiding anything suggested in the last week. The built-in book is only the backup.
+        week = s.scalars(select(Suggestion).where(Suggestion.user_id == user.id,
+                                                  Suggestion.created_at >= clock.now() - timedelta(days=7))).all()
+        try:
+            dish = parsing.ai_dish(_kitchen_lines(s, user), (user.pending or {}).get("people"),
+                                   list(dict.fromkeys(recipes.recipe_of(x)["name"] for x in week)), clock.now().strftime("%A"))
+        except Exception:  # noqa: BLE001
+            log.exception("AI dish failed; using the recipe book")
+    if dish:
         s.add(Usage(user_id=user.id, kind="ai_dish", usd=0.02, detail=dish["name"][:200]))
         r, uses_soon = dish, []
         sg = Suggestion(user_id=user.id, recipe_id=dish["id"], status="sent", recipe_json=json.dumps(dish))
+    else:
+        best, _near = recipes.pick(s, user, exclude=(exclude or set()) | rejected)
+        if not best:
+            msg = "What do you feel like tonight? Tell me (e.g. \"something with chicken\") and I'll find a dish from your kitchen."
+            send(s, user, wa.template(settings.tpl_notice, [msg], wa.text(msg)))
+            return None
+        r, uses_soon = best.recipe, best.use_soon
+        sg = Suggestion(user_id=user.id, recipe_id=r["id"], status="sent")
     s.add(sg)
     s.flush()
     if uses_soon:

@@ -493,15 +493,16 @@ def assistant_actions(data: dict) -> list:
 
 DISH_SYSTEM = """You create ONE realistic, tasty home dinner for a South African household using what is in their kitchen.
 Prefer ingredients that need using up. Assume basics (salt, oil, spices, flour, sugar, stock cubes) are there.
-Only use other ingredients from their kitchen list. Keep it practical for a weeknight. Don't repeat dishes listed as
-already suggested today. Use the exact keys from the list for ingredients, with amounts in that key's unit.
+Only use other ingredients from their kitchen list. Keep it practical for a weeknight. Never repeat or closely copy a
+dish listed as already suggested recently; vary cuisines and styles (SA favourites, braai sides, curries, pasta,
+stir-fries, bakes, soups, one-pan meals...). Use the exact keys from the list for ingredients, with amounts in that key's unit.
 Reply with JSON only."""
 
 
 def ai_dish(kitchen_lines: list[str], people, avoid: list[str], weekday: str) -> dict | None:
     from .config import settings
     people = int(people or 4)
-    content = (f"Today is {weekday}. Cooking for {people}.\nAlready suggested today (pick something different): "
+    content = (f"Today is {weekday}. Cooking for {people}.\nAlready suggested recently (pick something different): "
                + (", ".join(avoid) or "none") + "\n\nKitchen list (key | name | amount | where):\n" + "\n".join(kitchen_lines)
                + '\n\nReturn JSON: {"name":"dish name","minutes":n,"blurb":"one short line on why it works tonight",'
                '"ingredients":[{"key":"kitchen key","qty":n}],"steps":["short step", "..."]}')
