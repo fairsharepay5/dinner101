@@ -545,7 +545,13 @@ def _kitchen_lines(s: Session, user: User) -> list[str]:
         if pantry.status(it) == "gone":
             continue
         amt = pantry.shown_qty([it], it.qty, it.unit) or "amount unknown"
-        out.append(f"{it.key} | {it.name} | {amt} (tracked as {round(it.qty)} {it.unit}) | {it.storage}")
+        age = (clock.now() - it.added_at).days if it.added_at else None
+        fresh = ""
+        if it.category != "staple" and it.expires_at:
+            left = (it.expires_at - clock.now()).days
+            fresh = (" | USE SOON, about %d day(s) left" % max(left, 0)) if pantry.status(it) == "use_soon" else f" | good ~{left} more days"
+        got = f" | in since {age}d ago" if age is not None else ""
+        out.append(f"{it.key} | {it.name} | {amt} (tracked as {round(it.qty)} {it.unit}) | {it.storage}{got}{fresh}")
     return out
 
 
